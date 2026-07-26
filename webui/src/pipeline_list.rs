@@ -1,4 +1,4 @@
-use crate::{EditPayload, OpRow, op_card};
+use crate::{EditPayload, OpRow, op_card, op_instance::default_instance};
 use leptos::prelude::*;
 use op_card::OpCard;
 mod add_op;
@@ -15,6 +15,24 @@ pub fn PipelineList(
     on_run: Callback<()>,
     can_run: Signal<bool>,
 ) -> impl IntoView {
+    // Seeded at 1 because App hardcodes the initial row as id 0.
+    let next_id = StoredValue::new(1usize);
+
+    // Insert `tag` before the row with `before_id`; None appends.
+    let insert_op = Callback::new(move |(before_id, tag): (Option<usize>, &'static str)| {
+        let Some(inst) = default_instance(tag) else {
+            return;
+        };
+        let id = next_id.get_value();
+        next_id.set_value(id + 1);
+        set_rows.update(|rows| {
+            let pos = before_id
+                .and_then(|bid| rows.iter().position(|r| r.id == bid))
+                .unwrap_or(rows.len());
+            rows.insert(pos, OpRow { id, inst });
+        });
+    });
+
     let move_op = move |id: usize, dir: i32| {
         set_rows.update(|rows| {
             if let Some(i) = rows.iter().position(|r| r.id == id) {
@@ -43,13 +61,15 @@ pub fn PipelineList(
         <div class="w-[28rem] p-4 flex flex-col gap-3">
             <h3 class="text-lg font-bold text-teal-300">"Pipeline"</h3>
             <div class="flex flex-col gap-3">
-                <Inserter />
                 <For
                     each=move || rows.get()
                     key=|r| r.id
                     children=move |r| {
                         let id = r.id;
                         view! {
+                            <Inserter
+                                on_insert=Callback::new(move |tag| insert_op.run((Some(id), tag)))
+                            />
                             <OpCard
                                 id=id
                                 tag=r.inst.tag.clone()
@@ -61,10 +81,12 @@ pub fn PipelineList(
                         }
                     }
                 />
-                <Inserter always_expanded=true />
+                // trailing inserter (append):
+                <Inserter
+                    on_insert=Callback::new(move |tag| insert_op.run((None, tag)))
+                    always_expanded=true
+                />
             </div>
-
-            <AddOp set_rows=set_rows />
 
             // ---- Run pipeline button ----
             <button

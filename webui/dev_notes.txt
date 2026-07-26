@@ -1,0 +1,1 @@
+It occurs to me that the dropdown is something I'm going to be using more than just in the palette map op card. Perhaps I should make a generic dropdown list that takes some template type.
