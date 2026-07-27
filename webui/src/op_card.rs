@@ -16,7 +16,7 @@ pub fn OpCard(
     on_remove: Callback<()>,
     on_edit: Callback<EditPayload>,
     #[prop(into)] on_drag_start: Callback<leptos::ev::PointerEvent>,
-    #[prop(into)] offset: Signal<Option<f64>>,
+    #[prop(into)] is_dragging: Signal<bool>,
 ) -> impl IntoView {
     let (open, set_open) = signal(true);
 
@@ -38,10 +38,9 @@ pub fn OpCard(
     let tag_for_config = tag.clone();
 
     view! {
-        <div class="op-card-marker rounded-lg border border-slate-800 bg-slate-800/30 overflow-hidden"
-            style:transform=move || offset.get().map(|dy| format!("translateY({dy}px)")).unwrap_or_default()
-            style:pointer-events=move || if offset.get().is_some() { "none" } else { "auto" }
-            style:z-index=move || if offset.get().is_some() { "50" } else { "auto" }
+        <div class=format!("op-card-marker op-card-id-{id} rounded-lg border border-slate-800 bg-slate-800/30 overflow-hidden")
+            style:pointer-events=move || if is_dragging.get() { "none" } else { "auto" }
+            style:opacity=move || if is_dragging.get() { "0.6" } else { "1" }
         >
             // ---- Top bar (will become the drag handle in M2) ----
             <div class="flex items-center gap-2 px-3 py-2 bg-slate-800/50 border-b border-slate-800 cursor-grab select-none"
@@ -53,6 +52,7 @@ pub fn OpCard(
                 // Show/hide toggle — NOT part of the future drag handle.
                 <button
                     class="text-slate-500 hover:text-teal-300 px-1"
+                    on:pointerdown=move |ev| ev.stop_propagation()
                     on:click=move |ev| {
                         ev.stop_propagation();
                         set_open.update(|o| *o = !*o);
@@ -63,10 +63,12 @@ pub fn OpCard(
                 <span class="font-bold text-teal-300 text-sm">{label}</span>
                 <button
                     class="ml-auto text-slate-500 hover:text-teal-300 px-1"
+                    on:pointerdown=move |ev| ev.stop_propagation()
                     on:click=move |_| on_move.run(-1)
                 >"↑"</button>
                 <button
                     class="text-slate-500 hover:text-teal-300 px-1"
+                    on:pointerdown=move |ev| ev.stop_propagation()
                     on:click=move |_| on_move.run(1)
                 >"↓"</button>
                 <button
