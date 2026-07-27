@@ -3,12 +3,21 @@ use leptos::{html, portal::Portal, prelude::*};
 use leptos_use::{on_click_outside, use_event_listener};
 use web_sys::wasm_bindgen::JsCast;
 
+/// Where and which way the menu opens. Not flipped: hangs below, anchored by
+/// its top at `below`. Flipped: rises above, anchored by its bottom at `above`
+/// (a CSS `bottom` value, measured from the viewport's bottom edge).
 #[derive(Clone, Copy)]
 struct DropdownAnchor {
     x: f64,
-    y: f64,
     w: f64,
+    below: f64,
+    above: f64,
+    flip: bool,
 }
+
+/// Menu height ceiling; must match `max_height` in the view. Used to decide
+/// whether the menu fits below the button before flipping it above.
+const MENU_MAX_H: f64 = 320.0;
 
 #[component]
 pub fn PaletteDropdown(
@@ -19,19 +28,31 @@ pub fn PaletteDropdown(
     let button_ref = NodeRef::<html::Button>::new();
     let max_height = "320px";
     let open: RwSignal<Option<DropdownAnchor>> = RwSignal::new(None);
-    let on_click = move |ev: leptos::ev::MouseEvent| {
-        let target = event_target::<web_sys::Element>(&ev);
-        let rect = target.get_bounding_client_rect();
-        let dims = DropdownAnchor {
-            x: rect.x(),
-            y: rect.y() + rect.height(),
-            w: rect.width(),
-        };
+    let on_click = move |_: leptos::ev::MouseEvent| {
         if open.get_untracked().is_some() {
             open.set(None);
-        } else {
-            open.set(Some(dims));
+            return;
         }
+        // Measure the button itself, not the event target — a click on the
+        // button's text child would otherwise measure the text node.
+        let Some(btn) = button_ref.get_untracked() else {
+            return;
+        };
+        let rect = btn.get_bounding_client_rect();
+        let viewport_h = window()
+            .inner_height()
+            .ok()
+            .and_then(|v| v.as_f64())
+            .unwrap_or(800.0);
+        // Fit below the button's bottom edge? If not, flip above its top.
+        let flip = viewport_h - rect.bottom() < MENU_MAX_H;
+        open.set(Some(DropdownAnchor {
+            x: rect.x(),
+            w: rect.width(),
+            below: rect.bottom(),
+            above: viewport_h - rect.top(),
+            flip,
+        }));
     };
     let _ = use_event_listener(window(), leptos::ev::scroll, move |_| open.set(None));
     let _ = on_click_outside(dropdown_ref, move |ev| {
@@ -60,7 +81,8 @@ pub fn PaletteDropdown(
                     class="fixed z-50 bg-slate-800 border border-slate-700 rounded-md \
                         shadow-xl overflow-y-auto py-1"
                     style:left=format!("{}px", anchor.x)
-                    style:top=format!("{}px", anchor.y)
+                    style:top=(!anchor.flip).then(|| format!("{}px", anchor.below))
+                    style:bottom=anchor.flip.then(|| format!("{}px", anchor.above))
                     style:width=format!("{}px", anchor.w)
                     style:max-height=max_height
                     node_ref=dropdown_ref
