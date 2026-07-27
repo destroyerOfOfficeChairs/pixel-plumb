@@ -1,12 +1,22 @@
 use crate::{EditPayload, OpRow, op_card, op_instance::default_instance};
 use leptos::prelude::*;
+use leptos_use::use_event_listener;
 use op_card::OpCard;
 mod add_op;
-use add_op::AddOp;
 mod inserter;
 use inserter::Inserter;
 mod yaml_preview;
+use web_sys::wasm_bindgen::JsCast;
 use yaml_preview::YamlPreview;
+
+#[derive(Clone, Copy)]
+struct DragState {
+    id: usize,
+    from: usize,
+    start_y: f64,
+    pointer_y: f64,
+    target: usize, // where it'll land, recomputed on move
+}
 
 #[component]
 pub fn PipelineList(
@@ -17,6 +27,10 @@ pub fn PipelineList(
 ) -> impl IntoView {
     // Seeded at 1 because App hardcodes the initial row as id 0.
     let next_id = StoredValue::new(1usize);
+    let drag: RwSignal<Option<DragState>> = RwSignal::new(None);
+    // Card vertical midpoints (viewport y), snapshotted at pointerdown.
+    // Not reactive — read by the pointermove handler to compute the target index.
+    let midpoints = StoredValue::new(Vec::<f64>::new());
 
     // Insert `tag` before the row with `before_id`; None appends.
     let insert_op = Callback::new(move |(before_id, tag): (Option<usize>, &'static str)| {
@@ -57,6 +71,52 @@ pub fn PipelineList(
         });
     });
 
+    let start_drag = move |id: usize, ev: leptos::ev::PointerEvent| {
+        let from = rows
+            .with_untracked(|rs| rs.iter().position(|r| r.id == id))
+            .unwrap_or(0);
+        midpoints.set_value(card_midpoints());
+        let y = ev.client_y() as f64;
+        drag.set(Some(DragState {
+            id,
+            from,
+            start_y: y,   // grab point — frozen
+            pointer_y: y, // current — will update on move
+            target: from,
+        }));
+    };
+
+    let reorder = move |from: usize, to: usize| {
+        set_rows.update(|rows| {
+            if from >= rows.len() || to > rows.len() || from == to {
+                return;
+            }
+            let row = rows.remove(from);
+            // After removing, indices above `from` shift down by one.
+            let dest = if to > from { to - 1 } else { to };
+            rows.insert(dest, row);
+        });
+    };
+
+    // Update position + target while dragging. Window-level so it fires even when
+    // the pointer leaves the card (which it does constantly during a drag).
+    let _ = use_event_listener(window(), leptos::ev::pointermove, move |ev| {
+        if let Some(mut st) = drag.get_untracked() {
+            st.pointer_y = ev.client_y() as f64;
+            st.target =
+                midpoints.with_value(|m| m.iter().filter(|&&mid| st.pointer_y > mid).count());
+            drag.set(Some(st));
+        }
+    });
+
+    // Commit the reorder and end the drag.
+    let _ = use_event_listener(window(), leptos::ev::pointerup, move |_| {
+        if let Some(st) = drag.get_untracked() {
+            reorder(st.from, st.target);
+            drag.set(None);
+        }
+    });
+
     view! {
         <div class="w-[28rem] p-4 flex flex-col gap-3">
             <h3 class="text-lg font-bold text-teal-300">"Pipeline"</h3>
@@ -66,6 +126,9 @@ pub fn PipelineList(
                     key=|r| r.id
                     children=move |r| {
                         let id = r.id;
+                        let card_offset = Signal::derive(move || {
+                            drag.get().filter(|d| d.id == id).map(|d| d.pointer_y - d.start_y)
+                        });
                         view! {
                             <Inserter
                                 on_insert=Callback::new(move |tag| insert_op.run((Some(id), tag)))
@@ -77,6 +140,8 @@ pub fn PipelineList(
                                 on_move=Callback::new(move |dir: i32| move_op(id, dir))
                                 on_remove=Callback::new(move |_| remove_op(id))
                                 on_edit=edit_op
+                                on_drag_start=Callback::new(move |ev| start_drag(id, ev))
+                                offset=card_offset
                             />
                         }
                     }
@@ -100,4 +165,20 @@ pub fn PipelineList(
             <YamlPreview rows=rows />
         </div>
     }
+}
+
+// At pointerdown: snapshot card midpoints (viewport y).
+// The pipeline column has a known container; query its card children.
+fn card_midpoints() -> Vec<f64> {
+    let doc = document();
+    let cards = doc.query_selector_all(".op-card-marker").unwrap();
+    let v: Vec<f64> = (0..cards.length())
+        .filter_map(|i| cards.item(i))
+        .filter_map(|n| n.dyn_into::<web_sys::Element>().ok())
+        .map(|el| {
+            let r = el.get_bounding_client_rect();
+            r.top() + r.height() / 2.0
+        })
+        .collect();
+    v
 }

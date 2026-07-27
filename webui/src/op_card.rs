@@ -15,6 +15,8 @@ pub fn OpCard(
     on_move: Callback<i32>,
     on_remove: Callback<()>,
     on_edit: Callback<EditPayload>,
+    #[prop(into)] on_drag_start: Callback<leptos::ev::PointerEvent>,
+    #[prop(into)] offset: Signal<Option<f64>>,
 ) -> impl IntoView {
     let (open, set_open) = signal(true);
 
@@ -36,9 +38,18 @@ pub fn OpCard(
     let tag_for_config = tag.clone();
 
     view! {
-        <div class="rounded-lg border border-slate-800 bg-slate-800/30 overflow-hidden">
+        <div class="op-card-marker rounded-lg border border-slate-800 bg-slate-800/30 overflow-hidden"
+            style:transform=move || offset.get().map(|dy| format!("translateY({dy}px)")).unwrap_or_default()
+            style:pointer-events=move || if offset.get().is_some() { "none" } else { "auto" }
+            style:z-index=move || if offset.get().is_some() { "50" } else { "auto" }
+        >
             // ---- Top bar (will become the drag handle in M2) ----
-            <div class="flex items-center gap-2 px-3 py-2 bg-slate-800/50 border-b border-slate-800 cursor-grab select-none">
+            <div class="flex items-center gap-2 px-3 py-2 bg-slate-800/50 border-b border-slate-800 cursor-grab select-none"
+                on:pointerdown=move |ev| {
+                    ev.prevent_default();      // stop text selection during drag
+                    on_drag_start.run(ev);
+                }
+            >
                 // Show/hide toggle — NOT part of the future drag handle.
                 <button
                     class="text-slate-500 hover:text-teal-300 px-1"
@@ -61,6 +72,7 @@ pub fn OpCard(
                 <button
                     class="text-slate-500 hover:text-red-400 text-lg leading-none px-1"
                     on:click=move |_| on_remove.run(())
+                    on:pointerdown=move |ev| ev.stop_propagation()
                 >"×"</button>
             </div>
 
