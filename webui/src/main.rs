@@ -77,8 +77,11 @@ fn App() -> impl IntoView {
     let can_run = Signal::derive(move || source.get().is_some());
 
     view! {
-        <div class="flex gap-6 p-6 items-start">
-            <div class="flex flex-col gap-3">
+        // App shell: fills the window, never scrolls itself. The two panes
+        // manage their own overflow.
+        <div class="h-screen overflow-hidden flex gap-6 p-6">
+            // Pipeline pane: fixed width, scrolls internally when ops overflow.
+            <div class="shrink-0 overflow-y-auto">
                 <PipelineList
                     rows=rows
                     set_rows=set_rows
@@ -86,8 +89,15 @@ fn App() -> impl IntoView {
                     can_run=can_run
                 />
             </div>
-            <div class="flex-1">
-                <Viewport source=source output_url=output_url/>
+            // Viewport pane: fills the rest, fixed (doesn't scroll with the
+            // pipeline). Stacked as [toolbar] / [image] / [status]; the bars
+            // are placeholders here until their components land.
+            <div class="flex-1 flex flex-col overflow-hidden">
+                // <ViewportToolbar/> goes here
+                <div class="flex-1 overflow-hidden">
+                    <Viewport source=source output_url=output_url/>
+                </div>
+                // <ViewportStatus/> goes here
             </div>
         </div>
     }

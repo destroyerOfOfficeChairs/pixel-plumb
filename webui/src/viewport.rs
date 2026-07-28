@@ -54,15 +54,17 @@ pub fn Viewport(
     };
 
     view! {
-        <div class="p-4 flex flex-col gap-3">
+        <div class="h-full flex flex-col gap-3 overflow-hidden">
             <input type="file" accept="image/*" on:change=on_file
-                class="text-sm text-slate-300"/>
-            {move || display_url().map(|url| view! {
-                <img
-                    src=url
-                    class="max-w-full max-h-[80vh] object-contain border border-slate-700 rounded [image-rendering:pixelated]"
-                />
-            })}
+                class="text-sm text-slate-300 shrink-0"/>
+            <div class="flex-1 flex items-center justify-center overflow-hidden">
+                {move || display_url().map(|url| view! {
+                    <img
+                        src=url
+                        class="w-full h-full object-contain [image-rendering:pixelated]"
+                    />
+                })}
+            </div>
         </div>
     }
 }
