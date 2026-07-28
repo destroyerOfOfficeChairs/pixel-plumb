@@ -17,6 +17,11 @@ pub fn OpCard(
     on_edit: Callback<EditPayload>,
     #[prop(into)] on_drag_start: Callback<leptos::ev::PointerEvent>,
     #[prop(into)] is_dragging: Signal<bool>,
+    /// translateY in px while this card is being dragged; None otherwise. The
+    /// card stays in flow (so its slot still opens a gap) and is translated to
+    /// follow the pointer.
+    #[prop(into)]
+    drag_translate: Signal<Option<f64>>,
 ) -> impl IntoView {
     let (open, set_open) = signal(true);
 
@@ -40,7 +45,13 @@ pub fn OpCard(
     view! {
         <div class=format!("op-card-marker op-card-id-{id} rounded-lg border border-slate-800 bg-slate-800/30 overflow-hidden")
             style:pointer-events=move || if is_dragging.get() { "none" } else { "auto" }
-            style:opacity=move || if is_dragging.get() { "0.6" } else { "1" }
+            style:opacity=move || if is_dragging.get() { "0.85" } else { "1" }
+            style:z-index=move || if is_dragging.get() { "50" } else { "auto" }
+            style:position=move || if is_dragging.get() { "relative" } else { "static" }
+            style:transform=move || {
+                drag_translate.get().map(|t| format!("translateY({t}px)")).unwrap_or_default()
+            }
+            style:transition=move || if is_dragging.get() { "none" } else { "" }
         >
             // ---- Top bar (will become the drag handle in M2) ----
             <div class="flex items-center gap-2 px-3 py-2 bg-slate-800/50 border-b border-slate-800 cursor-grab select-none"

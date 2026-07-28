@@ -2,111 +2,14 @@ use crate::{EditPayload, OpRow, op_card, op_instance::default_instance};
 use leptos::prelude::*;
 use leptos_use::use_event_listener;
 use op_card::OpCard;
-mod add_op;
+mod drag;
 mod inserter;
+use drag::{DragState, card_tops, flip_play, target_index};
 use inserter::Inserter;
 mod yaml_preview;
 use web_sys::wasm_bindgen::JsCast;
 use web_sys::wasm_bindgen::prelude::Closure;
 use yaml_preview::YamlPreview;
-
-// Parse a card's id out of its class list (op-card-id-N). Classes render
-// reliably; the data-attribute path did not (get_attribute couldn't see what
-// Leptos's attr: set), so the id rides in a class instead.
-fn id_from_element(el: &web_sys::Element) -> Option<usize> {
-    el.class_list()
-        .value()
-        .split_whitespace()
-        .find_map(|c| c.strip_prefix("op-card-id-").map(str::to_string))
-        .and_then(|s| s.parse::<usize>().ok())
-}
-
-// Read each card's current top (viewport y), keyed by card id.
-fn card_tops() -> std::collections::HashMap<usize, f64> {
-    let mut map = std::collections::HashMap::new();
-    let doc = document();
-    let Ok(cards) = doc.query_selector_all(".op-card-marker") else {
-        return map;
-    };
-    for i in 0..cards.length() {
-        let Some(el) = cards
-            .item(i)
-            .and_then(|n| n.dyn_into::<web_sys::Element>().ok())
-        else {
-            continue;
-        };
-        if let Some(id) = id_from_element(&el) {
-            map.insert(id, el.get_bounding_client_rect().top());
-        }
-    }
-    map
-}
-
-/// FLIP invert+play. Called *after* the DOM reflects the reorder (from an
-/// Effect keyed on `rows`), so new positions are already correct — measure
-/// immediately, invert, then release next frame. `skip_id` is the dragged card.
-fn flip_play(first: std::collections::HashMap<usize, f64>, skip_id: usize) {
-    let doc = document();
-    let Ok(cards) = doc.query_selector_all(".op-card-marker") else {
-        return;
-    };
-    for i in 0..cards.length() {
-        let Some(el) = cards
-            .item(i)
-            .and_then(|n| n.dyn_into::<web_sys::HtmlElement>().ok())
-        else {
-            continue;
-        };
-        let Some(id) = id_from_element(&el) else {
-            continue;
-        };
-        if id == skip_id {
-            continue;
-        }
-        let Some(&old_top) = first.get(&id) else {
-            continue;
-        };
-        let new_top = el.get_bounding_client_rect().top();
-        let delta = old_top - new_top;
-        let style = el.style();
-        let _ = style.set_property("transition", "none");
-        if delta.abs() < 0.5 {
-            let _ = style.set_property("transform", "translateY(0)");
-        } else {
-            let _ = style.set_property("transform", &format!("translateY({delta}px)"));
-        }
-    }
-
-    // Release next frame: re-enable the transition and clear the transform so
-    // each card glides from its inverted (old) position to its real (new) one.
-    let release = Closure::once_into_js(move || {
-        let doc = document();
-        let Ok(cards) = doc.query_selector_all(".op-card-marker") else {
-            return;
-        };
-        for i in 0..cards.length() {
-            if let Some(el) = cards
-                .item(i)
-                .and_then(|n| n.dyn_into::<web_sys::HtmlElement>().ok())
-            {
-                let style = el.style();
-                // let _ = style.set_property("transition", "transform 350ms ease");
-                let _ = style.set_property(
-                    "transition",
-                    "transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1)",
-                );
-                let _ = style.set_property("transform", "translateY(0)");
-            }
-        }
-    });
-    let _ = window().request_animation_frame(release.unchecked_ref());
-}
-
-#[derive(Clone, Copy)]
-struct DragState {
-    id: usize,
-    pointer_y: f64,
-}
 
 #[component]
 pub fn PipelineList(
@@ -129,10 +32,27 @@ pub fn PipelineList(
     // Leptos's flush; the rAF inside clears the browser's layout reflow (so
     // getBoundingClientRect reads the NEW positions, not the pre-reflow ones).
     Effect::new(move |_| {
-        rows.track(); // re-run whenever the list changes
+        rows.track();
         if let Some((first, skip_id)) = pending_flip.get_value() {
             pending_flip.set_value(None);
-            let run = Closure::once_into_js(move || flip_play(first, skip_id));
+            let run = Closure::once_into_js(move || {
+                flip_play(first, skip_id);
+                // Correct the dragged card's translate now that the DOM has moved,
+                // killing the one-frame flash after a reorder.
+                if let Some(mut st) = drag.get_untracked() {
+                    if let Some(el) = document()
+                        .query_selector(&format!(".op-card-id-{}", st.id))
+                        .ok()
+                        .flatten()
+                        .and_then(|n| n.dyn_into::<web_sys::Element>().ok())
+                    {
+                        let rendered_top = el.get_bounding_client_rect().top();
+                        let home_top = rendered_top - st.translate;
+                        st.translate = st.pointer_y - st.grab_offset - home_top;
+                        drag.set(Some(st));
+                    }
+                }
+            });
             let _ = window().request_animation_frame(run.unchecked_ref());
         }
     });
@@ -191,9 +111,19 @@ pub fn PipelineList(
     });
 
     let start_drag = move |id: usize, ev: leptos::ev::PointerEvent| {
+        let py = ev.client_y() as f64;
+        let card_top = document()
+            .query_selector(&format!(".op-card-id-{id}"))
+            .ok()
+            .flatten()
+            .and_then(|n| n.dyn_into::<web_sys::Element>().ok())
+            .map(|el| el.get_bounding_client_rect().top())
+            .unwrap_or(py);
         drag.set(Some(DragState {
             id,
-            pointer_y: ev.client_y() as f64,
+            pointer_y: py,
+            grab_offset: py - card_top,
+            translate: 0.0,
         }));
     };
 
@@ -206,7 +136,6 @@ pub fn PipelineList(
             return;
         };
         st.pointer_y = ev.client_y() as f64;
-        drag.set(Some(st));
 
         // Current index of the dragged card (tracked by id — index changes as
         // the list reorders, so we resolve it fresh every move).
@@ -222,6 +151,24 @@ pub fn PipelineList(
             pending_flip.set_value(Some((card_tops(), st.id)));
             reorder(cur, desired);
         }
+
+        // Recompute the dragged card's transform so its rendered top sits
+        // exactly grab_offset below the pointer. Measure the card's *current*
+        // rendered top, back out the translate already applied to get its true
+        // home top, then translate from there. Self-correcting: no accumulation,
+        // so it can't drift, and the card stays in flow so the gap still opens.
+        if let Some(el) = document()
+            .query_selector(&format!(".op-card-id-{}", st.id))
+            .ok()
+            .flatten()
+            .and_then(|n| n.dyn_into::<web_sys::Element>().ok())
+        {
+            let rendered_top = el.get_bounding_client_rect().top();
+            let home_top = rendered_top - st.translate;
+            st.translate = st.pointer_y - st.grab_offset - home_top;
+        }
+
+        drag.set(Some(st));
     });
 
     // End the drag. The reorder already happened live, so there's nothing to
@@ -241,6 +188,10 @@ pub fn PipelineList(
                     key=|r| r.id
                     children=move |r| {
                         let id = r.id;
+                        // translateY for the dragged card (None for others).
+                        let drag_translate = Signal::derive(move || {
+                            drag.get().filter(|d| d.id == id).map(|d| d.translate)
+                        });
                         view! {
                             <Inserter
                                 on_insert=Callback::new(move |tag| insert_op.run((Some(id), tag)))
@@ -256,6 +207,7 @@ pub fn PipelineList(
                                 is_dragging=Signal::derive(move || {
                                     drag.get().map(|d| d.id == id).unwrap_or(false)
                                 })
+                                drag_translate=drag_translate
                             />
                         }
                     }
@@ -279,22 +231,4 @@ pub fn PipelineList(
             <YamlPreview rows=rows />
         </div>
     }
-}
-
-fn target_index(pointer_y: f64, dragged_id: usize) -> usize {
-    let doc = document();
-    let cards = doc.query_selector_all(".op-card-marker").unwrap();
-    (0..cards.length())
-        .filter_map(|i| cards.item(i))
-        .filter_map(|n| n.dyn_into::<web_sys::Element>().ok())
-        .filter(|el| {
-            // skip the dragged card's own node
-            id_from_element(el) != Some(dragged_id)
-        })
-        .map(|el| {
-            let r = el.get_bounding_client_rect();
-            r.top() + r.height() / 2.0
-        })
-        .filter(|&mid| pointer_y > mid)
-        .count()
 }
