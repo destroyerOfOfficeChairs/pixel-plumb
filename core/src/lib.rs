@@ -108,20 +108,37 @@ fn default_high_percentile() -> f32 {
     0.99
 } // clip brightest 1%
 
+/// Apply one operation. The single dispatch point, shared by `apply` and
+/// `apply_stages` so the match can't drift between them.
+fn apply_one(op: &Operation, image: Image) -> Result<Image, PixelizerError> {
+    Ok(match op {
+        Operation::Downsample { pixel_size } => downsample(*pixel_size, image),
+        Operation::PaletteMap {
+            colors,
+            dither,
+            preserve_alpha,
+        } => palette_map(image, colors, *dither, *preserve_alpha)?,
+        Operation::Upscale { factor } => upscale(image, *factor),
+        Operation::Posterize { levels } => posterize(image, *levels)?,
+        Operation::Blur { sigma } => blur(image, *sigma),
+        Operation::Normalize { low, high } => normalize(image, *low, *high),
+    })
+}
+
 pub fn apply(pipeline: &Pipeline, mut image: Image) -> Result<Image, PixelizerError> {
     for op in &pipeline.operations {
-        match op {
-            Operation::Downsample { pixel_size } => image = downsample(*pixel_size, image),
-            Operation::PaletteMap {
-                colors,
-                dither,
-                preserve_alpha,
-            } => image = palette_map(image, colors, *dither, *preserve_alpha)?,
-            Operation::Upscale { factor } => image = upscale(image, *factor),
-            Operation::Posterize { levels } => image = posterize(image, *levels)?,
-            Operation::Blur { sigma } => image = blur(image, *sigma),
-            Operation::Normalize { low, high } => image = normalize(image, *low, *high),
-        }
+        image = apply_one(op, image)?;
     }
     Ok(image)
+}
+
+/// Run the pipeline, returning the image after *each* operation, in order.
+/// `stages[i]` is the result of ops `0..=i`. One clone per stage.
+pub fn apply_stages(pipeline: &Pipeline, mut image: Image) -> Result<Vec<Image>, PixelizerError> {
+    let mut stages = Vec::with_capacity(pipeline.operations.len());
+    for op in &pipeline.operations {
+        image = apply_one(op, image)?;
+        stages.push(image.clone()); // keep this stage; `image` continues to the next op
+    }
+    Ok(stages)
 }
