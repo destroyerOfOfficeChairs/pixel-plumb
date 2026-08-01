@@ -8,17 +8,37 @@ The biggest item — moving the pipeline off the main thread — sits at the bot
 
 ## In Progress
 
-### Bottom Bar
+In order of which should be done first:
 
-Add a bottom bar with info about the output image:
+### Spinner
 
-- Native resolution
-- Actual resolution
-- File size in human readable format (KB and MB)
+Add a spinner that shows up only when the pipeline is running.
 
-### Viewport Bug Fix
+### Resize Op Card
 
-Fix bug where uploading a new image after running the pipeline does not show the new image in the viewport.
+Allow the user to specify the output size.
+
+### Adaptive Palette Map Op Card
+
+Create another bespoke Op Card for the adaptive palette map operation.
+
+---
+
+## Version 0.1.1 goals
+
+In no particular order:
+
+### Downsample op card reconfiguration
+
+Allow the user to specify whether a downsample operation should preserve colors or average them, as happens currently.
+
+Options to present to the user:
+
+- Average (default)
+
+- Mode
+
+- Nearest
 
 ### Web workers — move the pipeline off the main thread
 
@@ -34,9 +54,15 @@ What crosses the boundary is serialized, so a live `RgbaImage` can't be sent. Pl
 
 The pipeline crosses this boundary as a `Vec<Operation>` (already `Serialize`), so serialization is solved — the fiddly part is the build system: a second target, and Trunk emitting and serving both artifacts. High value (the headline UX problem), gated behind real build work — hence bottom.
 
----
+### Generic Dropdown
 
-## Version 0.1.1 goals
+Dropdowns are used in more than one place, and they have similar behavior (Only 320px height, open upwards if near the bottom of the screen, etc).
+
+Create a generic dropdown list that takes some template type.
+
+### Adaptive Palette Map
+
+Let the adaptive palette map op card have an option to sample from the source image rather than the output of the previous operation.
 
 ### Viewport polish
 
