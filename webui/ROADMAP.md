@@ -28,6 +28,10 @@ Create another bespoke Op Card for the adaptive palette map operation.
 
 In no particular order:
 
+### Hover tooltips
+
+Should be put in throughout the UI. May require updating the op_schema/boundary stuff.
+
 ### Downsample op card reconfiguration
 
 Allow the user to specify whether a downsample operation should preserve colors or average them, as happens currently.

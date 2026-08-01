@@ -52,6 +52,8 @@ pub fn Viewport(
     show_stages: RwSignal<bool>,
     /// Selected stage segment. None = show final output.
     active_stage: RwSignal<Option<usize>>,
+    /// True while a pipeline run is computing — shows a spinner overlay.
+    is_running: RwSignal<bool>,
     /// Stats about the last run, shown in the bottom bar.
     stats: RwSignal<ViewportStats>,
 ) -> impl IntoView {
@@ -67,12 +69,6 @@ pub fn Viewport(
             }
             source_url.set(Some(url));
         }
-        // A new image invalidates the previous run: clear the output so the new
-        // source shows, and drop the stale stages (greys the Stages button).
-        output_url.set(None);
-        stage_urls.set(Vec::new());
-        show_stages.set(false);
-        active_stage.set(None);
         let gloo_file = gloo_file::File::from(file);
         wasm_bindgen_futures::spawn_local(async move {
             if let Ok(bytes) = gloo_file::futures::read_as_bytes(&gloo_file).await {
@@ -119,12 +115,23 @@ pub fn Viewport(
                 <StagesBar stage_urls=stage_urls labels=stage_labels active_stage=active_stage/>
             })}
 
-            <div class="flex-1 min-h-0 flex items-center justify-center overflow-hidden p-3">
+            <div class="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden p-3">
                 {move || display_url().map(|url| view! {
                     <img
                         src=url
                         class="w-full h-full object-contain [image-rendering:pixelated]"
                     />
+                })}
+
+                // Spinner overlay while a run computes. Pure CSS animation
+                // (animate-spin), so it keeps turning even though the main
+                // thread is frozen by the synchronous pipeline run.
+                {move || is_running.get().then(|| view! {
+                    <div class="absolute inset-0 flex items-center justify-center \
+                                bg-slate-900/50">
+                        <div class="w-10 h-10 rounded-full border-4 border-slate-600 \
+                                    border-t-teal-400 animate-spin"></div>
+                    </div>
                 })}
             </div>
 

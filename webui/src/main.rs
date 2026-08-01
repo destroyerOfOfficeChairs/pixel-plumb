@@ -55,6 +55,8 @@ fn App() -> impl IntoView {
     let show_stages = RwSignal::new(false);
     // Which stage segment is selected for viewing. None = show final output.
     let active_stage = RwSignal::new(None::<usize>);
+    // True while a run is computing. Drives the viewport spinner.
+    let is_running = RwSignal::new(false);
     // Stats about the last run, shown in the bottom bar.
     let stats = RwSignal::new(viewport::ViewportStats::default());
 
@@ -82,50 +84,60 @@ fn App() -> impl IntoView {
             _ => None,
         };
 
-        let pipeline = Pipeline { operations: ops };
-        // synchronous — UI freezes here for a few seconds. Known.
-        // apply_stages gives the image after each op; prepend the original so
-        // the Stages bar reads [original, after op0, after op1, ...].
-        match pixelizer_core::apply_stages(&pipeline, img.clone()) {
-            Ok(stages) => {
-                let mut urls = vec![encode_to_data_url(&img)];
+        is_running.set(true);
 
-                // Final output: encode with size for the stats bar.
-                let (final_url, file_size, dims) = match stages.last() {
-                    Some(last) => {
-                        let (url, size) = viewport::encode_to_data_url_sized(last);
-                        (url, Some(size), Some((last.width(), last.height())))
-                    }
-                    // No ops: output is the original.
-                    None => {
-                        let (url, size) = viewport::encode_to_data_url_sized(&img);
-                        (url, Some(size), Some((img.width(), img.height())))
-                    }
-                };
+        // Let the spinner paint before the synchronous run freezes the thread.
+        // Awaiting a brief timeout yields to the event loop, so Leptos flushes
+        // the is_running=true DOM update AND the browser paints it before the
+        // compute below blocks. The spinner is pure CSS, so it keeps animating
+        // through the freeze (compositor-driven, off the main thread).
+        wasm_bindgen_futures::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(32).await;
 
-                urls.extend(stages.iter().map(encode_to_data_url));
-                // Replace the last (final) URL with the sized-encoded one so we
-                // don't encode it twice.
-                if let Some(slot) = urls.last_mut() {
-                    *slot = final_url.clone();
+            let pipeline = Pipeline { operations: ops };
+            // apply_stages gives the image after each op; prepend the original
+            // so the Stages bar reads [original, after op0, after op1, ...].
+            match pixelizer_core::apply_stages(&pipeline, img.clone()) {
+                Ok(stages) => {
+                    let mut urls = vec![encode_to_data_url(&img)];
+
+                    // Final output: encode with size for the stats bar.
+                    let (final_url, file_size, dims) = match stages.last() {
+                        Some(last) => {
+                            let (url, size) = viewport::encode_to_data_url_sized(last);
+                            (url, Some(size), Some((last.width(), last.height())))
+                        }
+                        // No ops: output is the original.
+                        None => {
+                            let (url, size) = viewport::encode_to_data_url_sized(&img);
+                            (url, Some(size), Some((img.width(), img.height())))
+                        }
+                    };
+
+                    urls.extend(stages.iter().map(encode_to_data_url));
+                    // Replace the final URL with the sized-encoded one so we
+                    // don't encode it twice.
+                    if let Some(slot) = urls.last_mut() {
+                        *slot = final_url.clone();
+                    }
+                    output_url.set(Some(final_url));
+                    stage_urls.set(urls);
+
+                    let upscaled = dims;
+                    let native = match (dims, trailing_upscale) {
+                        (Some((w, h)), Some(f)) if f > 0 => Some((w / f, h / f)),
+                        _ => dims,
+                    };
+                    stats.set(viewport::ViewportStats {
+                        native,
+                        upscaled,
+                        file_size,
+                    });
                 }
-                output_url.set(Some(final_url));
-                stage_urls.set(urls);
-
-                // native = final dims / trailing upscale (if any); else = final.
-                let upscaled = dims;
-                let native = match (dims, trailing_upscale) {
-                    (Some((w, h)), Some(f)) if f > 0 => Some((w / f, h / f)),
-                    _ => dims,
-                };
-                stats.set(viewport::ViewportStats {
-                    native,
-                    upscaled,
-                    file_size,
-                });
+                Err(e) => leptos::logging::error!("pipeline failed: {e:?}"),
             }
-            Err(e) => leptos::logging::error!("pipeline failed: {e:?}"),
-        }
+            is_running.set(false);
+        });
     });
 
     // Invalidate stage previews on any pipeline change. Every edit, add, remove,
@@ -178,6 +190,7 @@ fn App() -> impl IntoView {
                     stage_labels=stage_labels
                     show_stages=show_stages
                     active_stage=active_stage
+                    is_running=is_running
                     stats=stats
                 />
             </div>
