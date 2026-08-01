@@ -1,0 +1,12 @@
+Here's what you need to finish and release the first version:
+- Finish the bottom bar
+- Fix minor viewport bug (see webui/ROADMAP.md)
+- Add web workers
+	- How will this affect GPU utilization later?
+- Add saturation op
+- Add contrast op
+- Add adaptive palette generation op
+- Add resize op, so the user can specify output size
+
+And if you're feeling really motivated:
+- Kuwahara op on the GPU

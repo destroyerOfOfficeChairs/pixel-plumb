@@ -16,13 +16,9 @@ Add a bottom bar with info about the output image:
 - Actual resolution
 - File size in human readable format (KB and MB)
 
-### Viewport polish
+### Viewport Bug Fix
 
-- Clear image button
-- Zoom controls
-- Fit exactly to screen
-- Image translation (left/right/up/down in the viewport) with mouse.
-- Fix bug where uploading a new image after running the pipeline does not show  the new image in the viewport.
+Fix bug where uploading a new image after running the pipeline does not show the new image in the viewport.
 
 ### Web workers — move the pipeline off the main thread
 
@@ -41,6 +37,12 @@ The pipeline crosses this boundary as a `Vec<Operation>` (already `Serialize`), 
 ---
 
 ## Version 0.1.1 goals
+
+### Viewport polish
+
+- Clear image button
+- Zoom controls
+- Image translation (left/right/up/down in the viewport) with mouse.
 
 ### Palette file download
 
