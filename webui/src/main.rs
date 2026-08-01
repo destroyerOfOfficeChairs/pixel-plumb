@@ -55,6 +55,8 @@ fn App() -> impl IntoView {
     let show_stages = RwSignal::new(false);
     // Which stage segment is selected for viewing. None = show final output.
     let active_stage = RwSignal::new(None::<usize>);
+    // Stats about the last run, shown in the bottom bar.
+    let stats = RwSignal::new(viewport::ViewportStats::default());
 
     // Run the pipeline of operations on an image.
     let on_run = Callback::new(move |_: ()| {
@@ -73,6 +75,13 @@ fn App() -> impl IntoView {
             }
         };
 
+        // The trailing upscale factor (if the last op is an upscale) lets us
+        // report the "native" pre-upscale resolution separately from the final.
+        let trailing_upscale = match ops.last() {
+            Some(pixelizer_core::Operation::Upscale { factor }) => Some(*factor),
+            _ => None,
+        };
+
         let pipeline = Pipeline { operations: ops };
         // synchronous — UI freezes here for a few seconds. Known.
         // apply_stages gives the image after each op; prepend the original so
@@ -80,11 +89,40 @@ fn App() -> impl IntoView {
         match pixelizer_core::apply_stages(&pipeline, img.clone()) {
             Ok(stages) => {
                 let mut urls = vec![encode_to_data_url(&img)];
+
+                // Final output: encode with size for the stats bar.
+                let (final_url, file_size, dims) = match stages.last() {
+                    Some(last) => {
+                        let (url, size) = viewport::encode_to_data_url_sized(last);
+                        (url, Some(size), Some((last.width(), last.height())))
+                    }
+                    // No ops: output is the original.
+                    None => {
+                        let (url, size) = viewport::encode_to_data_url_sized(&img);
+                        (url, Some(size), Some((img.width(), img.height())))
+                    }
+                };
+
                 urls.extend(stages.iter().map(encode_to_data_url));
-                if let Some(last) = urls.last() {
-                    output_url.set(Some(last.clone()));
+                // Replace the last (final) URL with the sized-encoded one so we
+                // don't encode it twice.
+                if let Some(slot) = urls.last_mut() {
+                    *slot = final_url.clone();
                 }
+                output_url.set(Some(final_url));
                 stage_urls.set(urls);
+
+                // native = final dims / trailing upscale (if any); else = final.
+                let upscaled = dims;
+                let native = match (dims, trailing_upscale) {
+                    (Some((w, h)), Some(f)) if f > 0 => Some((w / f, h / f)),
+                    _ => dims,
+                };
+                stats.set(viewport::ViewportStats {
+                    native,
+                    upscaled,
+                    file_size,
+                });
             }
             Err(e) => leptos::logging::error!("pipeline failed: {e:?}"),
         }
@@ -98,6 +136,7 @@ fn App() -> impl IntoView {
         stage_urls.set(Vec::new());
         show_stages.set(false);
         active_stage.set(None);
+        stats.set(viewport::ViewportStats::default());
     });
 
     // Whether a run is currently possible (no image = can't run).
@@ -139,6 +178,7 @@ fn App() -> impl IntoView {
                     stage_labels=stage_labels
                     show_stages=show_stages
                     active_stage=active_stage
+                    stats=stats
                 />
             </div>
         </div>

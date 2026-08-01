@@ -4,16 +4,29 @@ use pixelizer_core::image::ImageFormat;
 use pixelizer_core::image::{self};
 use std::io::Cursor;
 
+mod bottom_bar;
 mod stages_bar;
 mod toolbar;
+pub use bottom_bar::ViewportStats;
+use bottom_bar::ViewportStatus;
 use stages_bar::StagesBar;
 use toolbar::ViewportToolbar;
 
 pub fn encode_to_data_url(img: &pixelizer_core::Image) -> String {
+    encode_to_data_url_sized(img).0
+}
+
+/// Like `encode_to_data_url` but also returns the raw PNG byte length (before
+/// base64), for the file-size stat in the bottom bar.
+pub fn encode_to_data_url_sized(img: &pixelizer_core::Image) -> (String, usize) {
     let mut buf = Vec::new();
     img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
         .expect("PNG encode");
-    format!("data:image/png;base64,{}", STANDARD.encode(&buf))
+    let size = buf.len();
+    (
+        format!("data:image/png;base64,{}", STANDARD.encode(&buf)),
+        size,
+    )
 }
 
 fn decode(bytes: &[u8]) -> Option<pixelizer_core::Image> {
@@ -39,6 +52,8 @@ pub fn Viewport(
     show_stages: RwSignal<bool>,
     /// Selected stage segment. None = show final output.
     active_stage: RwSignal<Option<usize>>,
+    /// Stats about the last run, shown in the bottom bar.
+    stats: RwSignal<ViewportStats>,
 ) -> impl IntoView {
     // Instant-display object URL of the uploaded file (a pointer to the blob,
     // no re-encode). Shown until a run produces output. Revoked on replacement.
@@ -52,6 +67,12 @@ pub fn Viewport(
             }
             source_url.set(Some(url));
         }
+        // A new image invalidates the previous run: clear the output so the new
+        // source shows, and drop the stale stages (greys the Stages button).
+        output_url.set(None);
+        stage_urls.set(Vec::new());
+        show_stages.set(false);
+        active_stage.set(None);
         let gloo_file = gloo_file::File::from(file);
         wasm_bindgen_futures::spawn_local(async move {
             if let Ok(bytes) = gloo_file::futures::read_as_bytes(&gloo_file).await {
@@ -106,6 +127,8 @@ pub fn Viewport(
                     />
                 })}
             </div>
+
+            <ViewportStatus stats=stats.into()/>
         </div>
     }
 }
