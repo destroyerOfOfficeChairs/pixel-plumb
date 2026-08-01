@@ -105,6 +105,28 @@ const POSTERIZE_PARAMS: &[ParamDescriptor] = &[ParamDescriptor {
     },
 }];
 
+const SATURATION_PARAMS: &[ParamDescriptor] = &[ParamDescriptor {
+    key: "factor",
+    label: "factor",
+    kind: ParamKind::Float {
+        default: 1.0,
+        min: 0.0,
+        max: 2.0,
+        step: 0.05,
+    },
+}];
+
+const CONTRAST_PARAMS: &[ParamDescriptor] = &[ParamDescriptor {
+    key: "factor",
+    label: "factor",
+    kind: ParamKind::Float {
+        default: 1.0,
+        min: 0.0,
+        max: 2.0,
+        step: 0.05,
+    },
+}];
+
 const PALETTE_MAP_PARAMS: &[ParamDescriptor] = &[
     ParamDescriptor {
         key: "palette",
@@ -186,6 +208,16 @@ pub const OP_VARIANTS: &[VariantDescriptor] = &[
         tag: "posterize",
         label: "posterize",
         params: POSTERIZE_PARAMS,
+    },
+    VariantDescriptor {
+        tag: "saturation",
+        label: "saturation",
+        params: SATURATION_PARAMS,
+    },
+    VariantDescriptor {
+        tag: "contrast",
+        label: "contrast",
+        params: CONTRAST_PARAMS,
     },
     VariantDescriptor {
         tag: "palette_map",

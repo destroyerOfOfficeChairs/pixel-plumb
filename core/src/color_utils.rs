@@ -96,6 +96,56 @@ pub fn rgb_to_oklab(r: u8, g: u8, b: u8) -> Oklab {
     }
 }
 
+/// Inverse of `rgb_to_oklab`: OkLab back to 8-bit sRGB. The exact algebraic
+/// reverse — OkLab -> LMS' (inverse matrix), cube to undo the cbrt, LMS ->
+/// linear RGB (inverse matrix), then linear -> sRGB (which clamps). These are
+/// the standard published OkLab inverse constants.
+pub fn oklab_to_rgb(c: Oklab) -> [u8; 3] {
+    // OkLab -> LMS'
+    let l_ = c.l + 0.3963377774 * c.a + 0.2158037573 * c.b;
+    let m_ = c.l - 0.1055613458 * c.a - 0.0638541728 * c.b;
+    let s_ = c.l - 0.0894841775 * c.a - 1.2914855480 * c.b;
+
+    // Undo the cube root
+    let l = l_ * l_ * l_;
+    let m = m_ * m_ * m_;
+    let s = s_ * s_ * s_;
+
+    // LMS -> linear RGB
+    let r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+    let g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+    let b = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+
+    // linear_to_srgb clamps to [0,1] internally.
+    [linear_to_srgb(r), linear_to_srgb(g), linear_to_srgb(b)]
+}
+
+/// Scale an OkLab color's chroma (saturation) about the neutral axis. Chroma is
+/// the (a, b) distance from grey; scaling a and b by `factor` scales saturation
+/// while leaving lightness untouched. factor 1.0 = unchanged, 0.0 = greyscale,
+/// >1.0 = more saturated. Lightness `l` is preserved exactly.
+pub fn scale_chroma(c: Oklab, factor: f32) -> Oklab {
+    Oklab {
+        l: c.l,
+        a: c.a * factor,
+        b: c.b * factor,
+    }
+}
+
+/// Adjust an OkLab color's contrast by pushing lightness away from (factor > 1)
+/// or toward (factor < 1) the mid-grey point of 0.5. Operating on perceptual
+/// lightness `l` — rather than stretching RGB channels independently — keeps
+/// hue and saturation stable; only the light/dark relationship changes. `l` is
+/// clamped to [0, 1] afterward, since strong contrast can push it out of range.
+/// Chroma (a, b) is untouched.
+pub fn shift_contrast(c: Oklab, factor: f32) -> Oklab {
+    Oklab {
+        l: ((c.l - 0.5) * factor + 0.5).clamp(0.0, 1.0),
+        a: c.a,
+        b: c.b,
+    }
+}
+
 pub fn nearest_oklab(palette: &[Oklab], target: Oklab) -> usize {
     palette
         .iter()
@@ -182,6 +232,41 @@ mod tests {
                 back
             );
         }
+    }
+
+    #[test]
+    fn oklab_rgb_roundtrip() {
+        // rgb -> oklab -> rgb should return (nearly) the same color. Allow ±2
+        // per channel for float rounding through the two matrix conversions.
+        for &(r, g, b) in &[
+            (0u8, 0u8, 0u8),
+            (255, 255, 255),
+            (255, 0, 0),
+            (0, 255, 0),
+            (0, 0, 255),
+            (128, 64, 200),
+            (30, 90, 150),
+            (200, 180, 40),
+        ] {
+            let [rr, gg, bb] = oklab_to_rgb(rgb_to_oklab(r, g, b));
+            assert!(
+                (rr as i32 - r as i32).abs() <= 2
+                    && (gg as i32 - g as i32).abs() <= 2
+                    && (bb as i32 - b as i32).abs() <= 2,
+                "roundtrip failed for ({r},{g},{b}): got ({rr},{gg},{bb})"
+            );
+        }
+    }
+
+    #[test]
+    fn scale_chroma_zero_is_grey() {
+        // Scaling chroma to 0 should produce a neutral grey: r == g == b.
+        let grey = oklab_to_rgb(scale_chroma(rgb_to_oklab(200, 40, 40), 0.0));
+        assert!(
+            (grey[0] as i32 - grey[1] as i32).abs() <= 1
+                && (grey[1] as i32 - grey[2] as i32).abs() <= 1,
+            "expected grey, got {grey:?}"
+        );
     }
 
     #[test]

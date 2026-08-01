@@ -1,6 +1,4 @@
 Here's what you need to finish and release the first version:
-- Finish the bottom bar
-- Fix minor viewport bug (see webui/ROADMAP.md)
 - Add web workers
 	- How will this affect GPU utilization later?
 - Add saturation op

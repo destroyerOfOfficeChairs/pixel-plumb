@@ -70,6 +70,12 @@ impl OpInstance {
                 low: self.f32_field("low")?,
                 high: self.f32_field("high")?,
             },
+            "saturation" => Operation::Saturation {
+                factor: self.f32_field("factor")?,
+            },
+            "contrast" => Operation::Contrast {
+                factor: self.f32_field("factor")?,
+            },
             "palette_map" => {
                 let colors = match self.values.get("palette") {
                     Some(ParamValue::Palette(c)) => c.clone(),

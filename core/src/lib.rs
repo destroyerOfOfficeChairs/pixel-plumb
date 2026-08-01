@@ -1,17 +1,21 @@
 pub use image;
 mod blur;
 mod color_utils;
+mod contrast;
 mod downsample;
 mod normalize;
 pub mod op_schema;
 mod palette_map;
 mod posterize;
+mod saturation;
 mod upscale;
 use blur::blur;
+use contrast::contrast;
 use downsample::downsample;
 use normalize::normalize;
 use palette_map::palette_map;
 use posterize::posterize;
+use saturation::saturation;
 use upscale::upscale;
 
 pub type Image = image::RgbaImage;
@@ -99,6 +103,22 @@ pub enum Operation {
         #[serde(default = "default_high_percentile")]
         high: f32,
     },
+    Saturation {
+        #[serde(default = "default_saturation")]
+        factor: f32,
+    },
+    Contrast {
+        #[serde(default = "default_contrast")]
+        factor: f32,
+    },
+}
+
+fn default_saturation() -> f32 {
+    1.0
+}
+
+fn default_contrast() -> f32 {
+    1.0
 }
 
 fn default_low_percentile() -> f32 {
@@ -122,6 +142,8 @@ fn apply_one(op: &Operation, image: Image) -> Result<Image, PixelizerError> {
         Operation::Posterize { levels } => posterize(image, *levels)?,
         Operation::Blur { sigma } => blur(image, *sigma),
         Operation::Normalize { low, high } => normalize(image, *low, *high),
+        Operation::Saturation { factor } => saturation(image, *factor),
+        Operation::Contrast { factor } => contrast(image, *factor),
     })
 }
 
