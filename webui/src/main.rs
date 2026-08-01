@@ -47,6 +47,14 @@ fn App() -> impl IntoView {
     }]);
     let source = RwSignal::new(None::<pixelizer_core::Image>);
     let output_url = RwSignal::new(None::<String>);
+    // Encoded image after each pipeline stage, prepended with the original:
+    // stage_urls[0] = original, stage_urls[i] = after op i-1. Empty = stale
+    // (no fresh run, or edited since), which greys the Stages button.
+    let stage_urls = RwSignal::new(Vec::<String>::new());
+    // Whether the Stages bar is shown.
+    let show_stages = RwSignal::new(false);
+    // Which stage segment is selected for viewing. None = show final output.
+    let active_stage = RwSignal::new(None::<usize>);
 
     // Run the pipeline of operations on an image.
     let on_run = Callback::new(move |_: ()| {
@@ -67,18 +75,50 @@ fn App() -> impl IntoView {
 
         let pipeline = Pipeline { operations: ops };
         // synchronous — UI freezes here for a few seconds. Known.
-        match pixelizer_core::apply(&pipeline, img) {
-            Ok(result) => output_url.set(Some(encode_to_data_url(&result))),
+        // apply_stages gives the image after each op; prepend the original so
+        // the Stages bar reads [original, after op0, after op1, ...].
+        match pixelizer_core::apply_stages(&pipeline, img.clone()) {
+            Ok(stages) => {
+                let mut urls = vec![encode_to_data_url(&img)];
+                urls.extend(stages.iter().map(encode_to_data_url));
+                if let Some(last) = urls.last() {
+                    output_url.set(Some(last.clone()));
+                }
+                stage_urls.set(urls);
+            }
             Err(e) => leptos::logging::error!("pipeline failed: {e:?}"),
         }
+    });
+
+    // Invalidate stage previews on any pipeline change. Every edit, add, remove,
+    // and reorder goes through set_rows, so tracking `rows` catches them all.
+    // Clears the stages (greys the button), hides the bar, and deselects.
+    Effect::new(move |_| {
+        rows.track();
+        stage_urls.set(Vec::new());
+        show_stages.set(false);
+        active_stage.set(None);
     });
 
     // Whether a run is currently possible (no image = can't run).
     let can_run = Signal::derive(move || source.get().is_some());
 
+    // Labels for the Stages bar: "Original" then each op's display name, in
+    // pipeline order. Matches the stage_urls layout (original prepended).
+    // Derived from rows; safe because any edit clears stage_urls (hiding the
+    // bar), so labels and stages are only ever shown together in sync.
+    let stage_labels = Signal::derive(move || {
+        let mut v = vec!["Original".to_string()];
+        v.extend(
+            rows.get()
+                .iter()
+                .map(|r| pixelizer_core::op_schema::label_for_tag(&r.inst.tag).to_string()),
+        );
+        v
+    });
+
     view! {
-        // App shell: fills the window, never scrolls itself. The two panes
-        // manage their own overflow.
+        // App shell: fills the window, never scrolls itself.
         <div class="h-screen overflow-hidden flex gap-6 p-6">
             // Pipeline pane: fixed width, scrolls internally when ops overflow.
             <div class="shrink-0 overflow-y-auto">
@@ -89,15 +129,17 @@ fn App() -> impl IntoView {
                     can_run=can_run
                 />
             </div>
-            // Viewport pane: fills the rest, fixed (doesn't scroll with the
-            // pipeline). Stacked as [toolbar] / [image] / [status]; the bars
-            // are placeholders here until their components land.
-            <div class="flex-1 flex flex-col overflow-hidden">
-                // <ViewportToolbar/> goes here
-                <div class="flex-1 overflow-hidden">
-                    <Viewport source=source output_url=output_url/>
-                </div>
-                // <ViewportStatus/> goes here
+            // Viewport pane: fills the rest, fixed. Manages its own internal
+            // stack (toolbar / stages bar / image).
+            <div class="flex-1 min-w-0 overflow-hidden">
+                <Viewport
+                    source=source
+                    output_url=output_url
+                    stage_urls=stage_urls
+                    stage_labels=stage_labels
+                    show_stages=show_stages
+                    active_stage=active_stage
+                />
             </div>
         </div>
     }
