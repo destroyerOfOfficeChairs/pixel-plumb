@@ -180,55 +180,60 @@ pub fn PipelineList(
     });
 
     view! {
-        <div class="w-[28rem] p-4 flex flex-col gap-3">
-            <h3 class="text-lg font-bold text-teal-300">"Pipeline"</h3>
-            <div class="flex flex-col gap-3">
-                <For
-                    each=move || rows.get()
-                    key=|r| r.id
-                    children=move |r| {
-                        let id = r.id;
-                        // translateY for the dragged card (None for others).
-                        let drag_translate = Signal::derive(move || {
-                            drag.get().filter(|d| d.id == id).map(|d| d.translate)
-                        });
-                        view! {
-                            <Inserter
-                                on_insert=Callback::new(move |tag| insert_op.run((Some(id), tag)))
-                            />
-                            <OpCard
-                                id=id
-                                tag=r.inst.tag.clone()
-                                rows=rows
-                                on_move=Callback::new(move |dir: i32| move_op(id, dir))
-                                on_remove=Callback::new(move |_| remove_op(id))
-                                on_edit=edit_op
-                                on_drag_start=Callback::new(move |ev| start_drag(id, ev))
-                                is_dragging=Signal::derive(move || {
-                                    drag.get().map(|d| d.id == id).unwrap_or(false)
-                                })
-                                drag_translate=drag_translate
-                            />
-                        }
-                    }
-                />
-                // trailing inserter (append):
-                <Inserter
-                    on_insert=Callback::new(move |tag| insert_op.run((None, tag)))
-                    always_expanded=true
-                />
+        <div class="w-[28rem] h-full flex flex-col">
+            // Pinned header — title and Run button, always visible.
+            <div class="shrink-0 flex flex-col gap-3 p-4 border-b border-slate-800">
+                <h3 class="text-lg font-bold text-teal-300">"Pipeline"</h3>
+                <button
+                    class="bg-teal-600 hover:bg-teal-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold rounded-md px-4 py-2"
+                    prop:disabled=move || !can_run.get()
+                    on:click=move |_| on_run.run(())
+                >
+                    "Run pipeline"
+                </button>
             </div>
 
-            // ---- Run pipeline button ----
-            <button
-                class="bg-teal-600 hover:bg-teal-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold rounded-md px-4 py-2"
-                prop:disabled=move || !can_run.get()
-                on:click=move |_| on_run.run(())
-            >
-                "Run pipeline"
-            </button>
+            // Scrolling body — the op list and YAML preview.
+            <div class="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-3">
+                <div class="flex flex-col gap-3">
+                    <For
+                        each=move || rows.get()
+                        key=|r| r.id
+                        children=move |r| {
+                            let id = r.id;
+                            // translateY for the dragged card (None for others).
+                            let drag_translate = Signal::derive(move || {
+                                drag.get().filter(|d| d.id == id).map(|d| d.translate)
+                            });
+                            view! {
+                                <Inserter
+                                    on_insert=Callback::new(move |tag| insert_op.run((Some(id), tag)))
+                                />
+                                <OpCard
+                                    id=id
+                                    tag=r.inst.tag.clone()
+                                    rows=rows
+                                    on_move=Callback::new(move |dir: i32| move_op(id, dir))
+                                    on_remove=Callback::new(move |_| remove_op(id))
+                                    on_edit=edit_op
+                                    on_drag_start=Callback::new(move |ev| start_drag(id, ev))
+                                    is_dragging=Signal::derive(move || {
+                                        drag.get().map(|d| d.id == id).unwrap_or(false)
+                                    })
+                                    drag_translate=drag_translate
+                                />
+                            }
+                        }
+                    />
+                    // trailing inserter (append):
+                    <Inserter
+                        on_insert=Callback::new(move |tag| insert_op.run((None, tag)))
+                        always_expanded=true
+                    />
+                </div>
 
-            <YamlPreview rows=rows />
+                <YamlPreview rows=rows />
+            </div>
         </div>
     }
 }

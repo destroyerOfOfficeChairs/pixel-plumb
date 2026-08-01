@@ -45,7 +45,7 @@ pub fn IntSlider(
                 class="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200"
                 min=min as f64 max=max as f64 step=1.0
                 prop:value=shown
-                on:input=commit
+                on:change=commit
                 on:focus=move |ev| {
                     let target: web_sys::HtmlInputElement = event_target(&ev);
                     let _ = target.select();
@@ -119,7 +119,7 @@ pub fn FloatSlider(
                 class="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-slate-200"
                 min=min max=max step=clean_step
                 prop:value=shown
-                on:input=commit
+                on:change=commit
                 on:focus=move |ev| {
                     let target: web_sys::HtmlInputElement = event_target(&ev);
                     let _ = target.select();

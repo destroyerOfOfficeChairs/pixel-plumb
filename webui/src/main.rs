@@ -171,8 +171,9 @@ fn App() -> impl IntoView {
     view! {
         // App shell: fills the window, never scrolls itself.
         <div class="h-screen overflow-hidden flex gap-6 p-6">
-            // Pipeline pane: fixed width, scrolls internally when ops overflow.
-            <div class="shrink-0 overflow-y-auto">
+            // Pipeline pane: fixed width, full height. Scrolls internally
+            // (below its pinned header), managed inside PipelineList.
+            <div class="shrink-0 h-full">
                 <PipelineList
                     rows=rows
                     set_rows=set_rows
