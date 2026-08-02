@@ -1,31 +1,13 @@
+# Test the adaptive palette map: generate a 12-color palette from the image
+# via median-cut, then map to it with Atkinson dithering.
 operations:
-  - type: downsample
-    pixel_size: 12
-  - type: normalize
-    low: .05
-    high: .99
-  - type: palette_map
-    # colors:
-    #   - "#2c2416"
-    #   - "#6e5a3d"
-    #   - "#a08658"
-    #   - "#c4a875"
-    #   - "#d4b896"
-    #   - "#e8d5a8"
-    # colors:
-    #   - "#000000"
-    #   - "#ffffff"
-    colors:
-      - "#9bbc0f"
-      - "#8bac0f"
-      - "#306230"
-      - "#0f380f"
+  - type: resize
+    max_size: 128
+
+  - type: adaptive_palette_map
+    colors: 16
     dither:
-      algorithm: bayer8
-      strength: 48.0
-    # dither:
-    #   algorithm: atkinson
-    #   bleed: .5
-    #   clamp: true
+      algorithm: atkinson
+
   - type: upscale
-    factor: 12
+    factor: 5

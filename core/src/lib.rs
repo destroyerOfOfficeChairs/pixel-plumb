@@ -1,4 +1,5 @@
 pub use image;
+mod adaptive_palette;
 mod blur;
 mod color_utils;
 mod contrast;
@@ -11,6 +12,7 @@ mod pixelizer_resize;
 mod posterize;
 mod saturation;
 mod upscale;
+use adaptive_palette::adaptive_palette;
 use blur::blur;
 use contrast::contrast;
 use downsample::downsample;
@@ -92,6 +94,14 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         preserve_alpha: Option<bool>,
     },
+    AdaptivePaletteMap {
+        #[serde(default = "default_adaptive_colors")]
+        colors: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dither: Option<DitherConfig>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preserve_alpha: Option<bool>,
+    },
     Upscale {
         factor: u32,
     },
@@ -132,6 +142,10 @@ fn default_resize_dim() -> u32 {
     64
 }
 
+fn default_adaptive_colors() -> u32 {
+    16
+}
+
 fn default_saturation() -> f32 {
     1.0
 }
@@ -157,6 +171,11 @@ fn apply_one(op: &Operation, image: Image) -> Result<Image, PixelizerError> {
             dither,
             preserve_alpha,
         } => palette_map(image, colors, *dither, *preserve_alpha)?,
+        Operation::AdaptivePaletteMap {
+            colors,
+            dither,
+            preserve_alpha,
+        } => adaptive_palette(image, *colors, *dither, *preserve_alpha)?,
         Operation::Upscale { factor } => upscale(image, *factor),
         Operation::Posterize { levels } => posterize(image, *levels)?,
         Operation::Blur { sigma } => blur(image, *sigma),

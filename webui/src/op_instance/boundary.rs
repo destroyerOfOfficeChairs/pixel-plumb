@@ -44,7 +44,6 @@ impl OpInstance {
         Ok(n as f32)
     }
 
-    /// Read a Bool param (for flag core fields).
     fn bool_field(&self, key: &str) -> Result<bool, BuildError> {
         self.values
             .get(key)
@@ -109,6 +108,26 @@ impl OpInstance {
                     _ => return Err(self.miss("alpha", "expected a bool")),
                 };
                 Operation::PaletteMap {
+                    colors,
+                    dither,
+                    preserve_alpha,
+                }
+            }
+            "adaptive_palette_map" => {
+                let colors = self.u32_field("colors")?;
+                let dither = match self.values.get("dither") {
+                    Some(ParamValue::Dither(choice)) => {
+                        choice.as_ref().map(DitherChoice::to_config).transpose()?
+                    }
+                    None => None,
+                    _ => return Err(self.miss("dither", "expected a dither value")),
+                };
+                let preserve_alpha = match self.values.get("alpha") {
+                    Some(ParamValue::Bool(true)) => Some(true),
+                    Some(ParamValue::Bool(false)) | None => None,
+                    _ => return Err(self.miss("alpha", "expected a bool")),
+                };
+                Operation::AdaptivePaletteMap {
                     colors,
                     dither,
                     preserve_alpha,

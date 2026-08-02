@@ -184,6 +184,30 @@ const PALETTE_MAP_PARAMS: &[ParamDescriptor] = &[
     },
 ];
 
+const ADAPTIVE_PALETTE_MAP_PARAMS: &[ParamDescriptor] = &[
+    ParamDescriptor {
+        key: "colors",
+        label: "colors",
+        kind: ParamKind::Int {
+            default: 16,
+            min: 2,
+            max: 256,
+        },
+    },
+    ParamDescriptor {
+        key: "alpha",
+        label: "preserve alpha",
+        kind: ParamKind::Bool { default: true },
+    },
+    ParamDescriptor {
+        key: "dither",
+        label: "dither",
+        kind: ParamKind::Dither {
+            default_tag: "bayer8",
+        },
+    },
+];
+
 // ---------------------------------------------------------------------------
 // The two variant tables
 // ---------------------------------------------------------------------------
@@ -263,5 +287,10 @@ pub const OP_VARIANTS: &[VariantDescriptor] = &[
         tag: "palette_map",
         label: "palette map",
         params: PALETTE_MAP_PARAMS,
+    },
+    VariantDescriptor {
+        tag: "adaptive_palette_map",
+        label: "adaptive palette map",
+        params: ADAPTIVE_PALETTE_MAP_PARAMS,
     },
 ];

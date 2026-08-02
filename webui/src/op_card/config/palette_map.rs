@@ -1,5 +1,5 @@
 mod color_picker;
-mod dither;
+pub(super) mod dither;
 mod dropdown;
 mod dropzone;
 mod swatches;
