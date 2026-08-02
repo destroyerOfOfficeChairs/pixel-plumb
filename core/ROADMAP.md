@@ -42,13 +42,13 @@ Design decisions to make:
 
 **Ordering.** Before quantization (its whole purpose), and usually before `downsample` so it works on full-resolution detail.
 
-### `contrast` / `brightness`
+### `brightness`
 
-**Why.** `normalize` stretches the brightness distribution automatically; explicit contrast/brightness curves give manual control over how the input tone maps onto a palette, which `normalize` alone can't express. Cheap and frequently wanted.
+**Why.** `normalize` stretches the brightness distribution automatically; explicit brightness curves give manual control over how the input tone maps onto a palette, which `normalize` alone can't express. Cheap and frequently wanted.
 
-**How.** Pointwise tone curve. Apply in linear-light to avoid the gamma artifacts that plague sRGB-space arithmetic; gamma/contrast applied directly to sRGB values shifts midtones in ways that look wrong.
+**How.** Pointwise tone curve. Apply in linear-light to avoid the gamma artifacts that plague sRGB-space arithmetic.
 
-**Parameters.** `amount: f32` (or separate `contrast`/`brightness` scalars).
+**Parameters.** `amount: f32`.
 
 **Ordering.** Before quantization, like `normalize`.
 
@@ -75,18 +75,6 @@ Design decisions to make:
 **How.** Sobel, or difference-of-gaussians, to produce an edge map. Open question: whether this is one op that outputs an edge mask, or a combined op that detects edges and composites them onto the image. The compositing-onto-palette behavior is the genuinely useful end goal but couples it to `palette_map`; worth thinking through before implementing.
 
 **Parameters.** TBD — likely a threshold and an output/blend mode.
-
-### Adaptive palette generation — `quantize_kmeans` / `quantize_median_cut`
-
-**Why.** *The highest-value item here.* Today `palette_map` requires a hand-specified palette; this generates an N-color palette *from the image*, making the tool useful without curating palettes by hand. Reuses the entire existing OkLab + dithering path — only the palette-selection front-end is new.
-
-**How.** Two approaches, both clustering in OkLab so the resulting palette is perceptually sensible:
-- **k-means** — higher quality, iterative, slower. Cluster pixel colors in OkLab; the cluster centroids become the palette.
-- **median cut** — cheaper, non-iterative adaptive alternative. Good fallback / fast path.
-
-Open question: is this a *new operation* that emits a palette into a following `palette_map`, or a *mode* of `palette_map` where `colors` is replaced by a "generate N from image" option? The latter is probably the cleaner UX, but the operation pipeline passes images, not palettes, between steps — so generating and consuming the palette likely has to happen inside a single op.
-
-**Parameters.** `n: u32` (color count), plus algorithm selection.
 
 ### `crop`
 

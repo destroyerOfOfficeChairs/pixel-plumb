@@ -2,6 +2,8 @@
 
 A walk from the schema down to a running pipeline, framed around the design decision that shaped everything: the **value-bag**. Once that clicks, the rest falls into place.
 
+This doc covers the *software structure* — how the UI stores and edits pipeline state. For the *color-science and algorithmic* rationale (why OkLab, why linear-light dithering, how adaptive palettes are generated), see [core's DESIGN.md](core/DESIGN.md). For how to run and build the frontend, see [webui's README](webui/README.md).
+
 ## The central tension
 
 The `core` crate has a typed enum, `Operation`, that describes every possible thing the pipeline can do:
@@ -19,7 +21,7 @@ This enum is *perfect* for the pipeline runner in `apply()` — it match-arms ov
 
 But the UI has a different job. The UI needs to render a slider for `pixel_size`, another slider for `sigma`, a checkbox for `preserve_alpha`. And when the user drags a slider, the UI needs to *write back* into whichever field of whichever variant of the enum is currently being edited.
 
-A generic slider component doesn't know that "the value it's editing" is `Operation::Blur::sigma`. So under a typed-first design, you'd need either five bespoke config components (one per op) or a serde bridge that lets a generic slider read/write "the field named `sigma` of the currently-selected op." An earlier version of the codebase actually did the second — serialize the op to JSON, poke a field, deserialize back. It worked, but every edit paid a full serde round-trip.
+A generic slider component doesn't know that "the value it's editing" is `Operation::Blur::sigma`. So under a typed-first design, you'd need either a bespoke config component per op or a serde bridge that lets a generic slider read/write "the field named `sigma` of the currently-selected op." An earlier version of the codebase actually did the second — serialize the op to JSON, poke a field, deserialize back. It worked, but every edit paid a full serde round-trip.
 
 **The value-bag is the alternative:** don't use the typed enum as the live UI state at all. Use a shape the UI can naturally read and write, and reconstruct the typed enum only at the moment you need it.
 
@@ -66,11 +68,16 @@ An op instance is a tag (which op it is) plus a map from field name to value. Ev
 
 The four arms of `ParamValue` map to the five `ParamKind`s: `Float` and `Int` both fold into `Num(f64)` (the schema carries which is which), `Bool` becomes `Bool`, `Palette` becomes `Palette`, `Dither` becomes `Dither` (nesting a mini-instance for the chosen algorithm and its params).
 
-The webui has three source-of-truth signals at the root (in `main.rs` / `App`):
+The webui's source-of-truth signals live at the root (in `main.rs` / `App`):
 
 - `rows: signal(Vec<OpRow>)` — the pipeline. `OpRow` wraps `OpInstance` with a stable UI-only `id` for the keyed `<For/>`.
 - `source: RwSignal<Option<Image>>` — the decoded input image.
 - `output_url: RwSignal<Option<String>>` — the output as a data URL.
+- `stage_urls`, `show_stages`, `active_stage` — per-op stage previews (the Stages bar): the encoded image after each op, whether the bar is shown, and which stage is selected for viewing.
+- `is_running` — drives the run spinner.
+- `stats` — resolution and file-size readout for the bottom bar.
+
+The last three groups are viewport features layered on later; the first three are the original core. All are edited-invalidated together — any change to `rows` clears the stage previews and stats, since a fresh run is needed to recompute them.
 
 The edit path is one closure, in `pipeline_list.rs`:
 
@@ -88,7 +95,7 @@ That's the *entire write path*. Every config card, every widget, every edit funn
 
 ## Widget generic-ness
 
-Because the bag matches the schema shape, one config component handles all five scalar ops. `generic_config.rs` walks `OP_VARIANTS`, and for each param it renders a slider or checkbox by dispatching on the schema's `ParamKind`:
+Because the bag matches the schema shape, one config component handles all the *scalar* ops. `generic_config.rs` walks `OP_VARIANTS`, and for each param it renders a slider or checkbox by dispatching on the schema's `ParamKind`:
 
 ```rust
 for param in variant.params {
@@ -101,11 +108,17 @@ for param in variant.params {
 }
 ```
 
-Adding a sixth scalar op is one row in `OP_VARIANTS`. That's the payoff.
+Adding a scalar op is one row in `OP_VARIANTS`. That's the payoff.
 
-`palette_map` is the exception — it has non-scalar params (a palette, a dither), so its config is hand-written in `palette_map.rs`. But even *it* reuses `BoolWidget` for the scalar `alpha` param. One checkbox implementation for both paths.
+Three ops have **bespoke** config cards, dispatched by tag in `config.rs` before the generic fallback:
 
-Similarly, `add_op.rs` is tiny because `all_op_menu()` (schema) and `default_instance(tag)` (bag construction from schema) do the work. The dropdown of "operations you can add" is derived from `OP_VARIANTS`; the fresh instance you push into `rows` is built from the schema's defaults.
+- `palette_map` — non-scalar params (a palette editor, a dither picker).
+- `adaptive_palette_map` — the palette-map card minus the palette editor, plus a "colors" count slider; reuses the same dither and preserve-alpha widgets.
+- `resize` — a two-mode layout (a checkbox toggles between a longest-side slider and exact width/height sliders, greying the inactive half) that the generic per-param loop can't express.
+
+Even the bespoke cards reuse the generic scalar widgets (`BoolWidget`, `IntSlider`) rather than reimplementing them — the bespokeness is in the *layout*, not the controls.
+
+The op menu is likewise schema-derived: `all_op_menu()` lists every op from `OP_VARIANTS`, and `default_instance(tag)` builds a fresh instance from the schema's defaults. The dropdown of addable operations and the starting values both come from the table — no separate list to maintain.
 
 ## The boundary — the one place types come back
 
@@ -127,11 +140,11 @@ When the Run button in `pipeline_list.rs` fires:
 
 1. Its `on_click` calls the `on_run` callback (passed down from `App`).
 2. `App`'s `on_run` reads `source.get()`, then maps each row's `inst.to_operation()` — that's the boundary — collecting into `Vec<Operation>` or short-circuiting on the first `BuildError` (logged, run aborts).
-3. Builds a `Pipeline { operations }` and calls `pixelizer_core::apply(&pipeline, img)`. This runs synchronously on the main thread (moving it to a web worker is the biggest open ROADMAP item).
-4. PNG-encodes the result, sets `output_url`.
-5. The viewport's `<img>` reactively displays the data URL.
+3. It sets `is_running` and yields a frame (via `spawn_local` + a short timeout) so the spinner paints *before* the synchronous compute freezes the main thread — then runs `pixelizer_core::apply_stages(&pipeline, img)`, which returns the image after each op.
+4. The final stage becomes `output_url`; all stages (prepended with the original) become `stage_urls` for the Stages bar; resolution and encoded size become `stats`. Encoding goes through `pixelizer_core::encode_png` (indexed when the output is small and opaque, see DESIGN.md).
+5. The viewport reactively displays the result, and the Stages bar / bottom bar update.
 
-The Run button lives in `PipelineList` (the child) but the *logic* lives in `App` (the root). `PipelineList` gets a `Callback<()>` to trigger the run and a `Signal<bool>` for the disabled state. The child never holds `source` or `output_url`; it just triggers.
+The run is still **synchronous** — it blocks the main thread for its duration. The spinner makes that freeze legible; actually removing it (a web worker) is the biggest open ROADMAP item. The Run button lives in `PipelineList` (the child) but the *logic* lives in `App` (the root): `PipelineList` gets a `Callback<()>` to trigger and a `Signal<bool>` for the disabled state, and never holds `source` or `output_url` itself.
 
 ## Why this all coheres
 
@@ -141,6 +154,6 @@ That substitution is only good because the schema table (`OP_VARIANTS`) exists t
 
 The three-file splits make each of those parts findable on disk: `op_schema/tables.rs` is the contract, `op_instance.rs` is the storage type, `op_instance/boundary.rs` is the enforcement. If you come back to this in six months and want to know "where does the runtime check happen," the filename answers. If you want to know "what params does an op have," different filename. If you want to know "what shape can a value take," a third.
 
-The payoff, again: 5 scalar ops share 1 config component. Adding a 6th is one table row. Adding a new dither algorithm is one table row. The one non-scalar op (`palette_map`) is bespoke, but that bespokeness is *localized* — it doesn't push its shape onto anything else.
+The payoff, again: the scalar ops share one config component, and adding another is one table row. Adding a new dither algorithm is one table row. The bespoke ops (`palette_map`, `adaptive_palette_map`, `resize`) are hand-written, but that bespokeness is *localized* to their own cards — it doesn't push its shape onto anything else, and even they reuse the shared scalar widgets.
 
 That's the architecture, top to bottom.

@@ -8,7 +8,7 @@ Planned work: [ROADMAP.md](ROADMAP.md).
 
 ## Status
 
-Full path works: build a pipeline, upload an image, run, see output. The pipeline runs **synchronously on the main thread**, so the UI freezes for the length of a run — noticeable on large images or expensive orderings (posterize before downsample). Removing that freeze via a web worker is the headline remaining task (ROADMAP).
+Feature-complete for v0.1. Build a pipeline, load an image, run it, inspect the result — including per-operation stage previews and a resolution/file-size readout. The pipeline runs **synchronously on the main thread**, so the UI freezes for the length of a run; a spinner now signals that a run is in progress so the freeze reads as "working" rather than "hung." Actually removing the freeze via a web worker is the headline remaining task (ROADMAP).
 
 ## Running locally
 
@@ -45,85 +45,47 @@ Compute is the bottleneck here, not download, so `opt-level = "3"` is likely bet
 
 **`wasm-opt`** (Binaryen) — post-`rustc` pass, shrinks the `.wasm` further; Trunk runs it, configured in `Trunk.toml`. See Trunk docs for current option names.
 
-## Architecture
+## What it does
 
-The central design decision — the one to re-load into your head first — is that **the live pipeline is stored as data, not as core's typed `Operation` enum.** Everything below follows from that.
+Load an image, assemble an ordered list of operations, run the pipeline, and view the result — all in the browser.
 
-### Two representations, one boundary
+**Operations** (see [core's DESIGN.md](../core/DESIGN.md) for the color-science rationale behind them):
 
-`core::Operation` is the typed form the pipeline needs at `apply` time. But using it as the *live UI state* forces a translation layer on every edit: a generic slider doesn't know a `Blur` has a `sigma: f32`, so editing it meant serializing the op, poking one field, and deserializing back (an earlier design did exactly this, via `serde_json`; it's gone).
+- **downsample** — shrink by nearest-neighbor sampling (cropping to an even multiple first), the basis of the pixelated look.
+- **resize** — nearest-neighbor resize, either to a longest-side target (aspect preserved) or exact width×height.
+- **palette map** — map every pixel to the nearest color in a chosen palette, in perceptual OkLab space, with optional error-diffusion or ordered dithering.
+- **adaptive palette map** — generate a palette *from the image* (median-cut) and map to it; same dithering options, no palette to pick.
+- **posterize** — reduce the number of levels per channel.
+- **blur** — Gaussian blur (in linear light).
+- **normalize** — stretch the brightness range by percentile.
+- **saturation** / **contrast** — adjust chroma / lightness in OkLab.
+- **upscale** — integer nearest-neighbor scale-up, for viewing pixel art at size.
 
-Instead the live state is a **value bag**: an op-instance is a `tag` plus a `BTreeMap<String, ParamValue>` keyed by the same param keys the schema declares. A widget reads and writes `values[key]` directly — no closures, no serde. The typed `Operation` is reconstructed **once, at Run**, and that boundary is the only place the schema-vs-bag contract is checked.
+Operation order matters — palette mapping should come after averaging steps like downsample and blur. See [DESIGN.md](../core/DESIGN.md) for the full ordering guidance.
 
-The two data sources:
+**Features:**
 
-- **Schema** — `core::op_schema`, a `'static` descriptor table (`OP_VARIANTS`, `DITHER_VARIANTS`). Owns each param's key, label, kind, range, and default. The single source of truth for *what a param is*. Read by any config; never mutated.
-- **State** — `rows: signal(Vec<OpRow>)`. The user's current values. `OpRow` is `{ id, inst: OpInstance }`; `id` is the stable key for the keyed `<For/>` (UI-only, kept off `OpInstance` so the instance stays pure data).
+- **Drag-and-drop reordering** of the pipeline, with insert-anywhere between ops.
+- **Stage previews** — after a run, a filmstrip shows the image after each operation (plus the original); click to inspect any stage in the viewport. Editing any op invalidates the previews until the next run.
+- **Live YAML preview** — a toggle below Run shows the pipeline serialized to YAML, with copy-to-clipboard. The output is exactly what the `cli` parses: copy, save as `.yaml`, and it runs unmodified through the CLI.
+- **Instant image display** on upload (via an object URL — the decode for the pipeline happens in the background).
+- **Size-optimized output** — results are encoded as indexed PNGs when small and opaque, often several times smaller than truecolor (see DESIGN.md).
 
-Key types (in `op_instance.rs`):
+## How it's built
 
-- `OpInstance { tag: String, values: BTreeMap<String, ParamValue> }` — one op in the live pipeline.
-- `ParamValue` — `Num(f64)` (covers both Float and Int; the schema's `ParamKind` carries the int/float distinction and the boundary narrows to `u32`/`f32` per field), `Bool(bool)`, `Palette(Vec<String>)`, `Dither(Option<DitherChoice>)`.
-- `DitherChoice { tag, values }` — a nested tag+scalar-bag, structurally a mini-instance. Its own type (not reused `OpInstance`) so its bag is provably scalar-only — the recursion is exactly two deep, no deeper.
+The one design decision to load into your head first: **the live pipeline is stored as data — a "value bag" — not as core's typed `Operation` enum.** A widget reads and writes bag entries directly; the typed enum is reconstructed once, at Run, at a single boundary. This is what lets the scalar ops share one generic config component (adding one is a single schema-table row). The full walk-through — schema, bag, boundary, run path — is in the repo's [ARCHITECTURE.md](../ARCHITECTURE.md). The color-science and algorithmic rationale (OkLab, linear-light dithering, median-cut, indexed encoding) is in [core's DESIGN.md](../core/DESIGN.md).
 
-Why `BTreeMap` not `HashMap`: deterministic iteration, so YAML output is stable.
-
-### Construction and the boundary
-
-- `default_instance(tag)` builds a fresh instance by reading defaults from `OP_VARIANTS`. Defaults live in the schema and nowhere else — this is why adding a scalar op is one table row.
-- `OpInstance::to_operation() -> Result<Operation, BuildError>` is the boundary. It reads each key out of the bag, narrows to the field's real type, and assembles the typed `Operation`. It returns `Result` because the bag is `String -> ParamValue` and so a missing/mistyped key is a *runtime* possibility (e.g. an imported YAML predating a schema change) — surfaced as a logged error at Run, not a panic. `DitherChoice::to_config()` does the same for the nested dither enum. Both are hand-written (no serde) so the whole boundary is uniform.
-
-### Edit flow
-
-A config card emits an edit upward via `on_edit: Callback<EditPayload>`, where `EditPayload = (usize, String, ParamValue)` — row id, param key, new value. `PipelineList::edit_op` drops it into that instance's bag with one `values.insert`. That's the entire write path; the serde bridge that used to live here is gone.
-
-Nested (dither) edits stay uniform by committing the *whole* `ParamValue::Dither(Some(choice))` under key `"dither"` — the dither child reads its current choice, mutates a copy, and sends it back as one value. No nested-path message type.
-
-### Config rendering
-
-`op_config_view(id, tag, ...)` dispatches by tag: the five scalar ops go through `generic_op_config`, which loops the variant's params and renders a widget per `ParamKind` (`FloatSlider`/`IntSlider`/`BoolWidget`). `palette_map` is the one hand-written config — its params (`palette`, `dither`) aren't scalars, so it composes its controls directly, reusing `BoolWidget` for the scalar `alpha` param. (`BoolWidget` is shared: the generic loop renders it via a `<BoolWidget/>` tag; palette_map renders it the same way. One checkbox implementation.)
-
-### Other state
-
-- `source: RwSignal<Option<Image>>` — decoded source (`RgbaImage`). Written by the Viewport's file input, read by the run handler.
-- `output_url: RwSignal<Option<String>>` — result as a PNG `data:` URL. Written by the run handler, read by the Viewport's `<img>`.
-- Palettes load once at startup from `palettes.yaml` (`include_str!`), parsed to a name-sorted `Vec<(String, Vec<String>)>`, provided via context as `StoredValue<Palettes>`, read by the palette-map config.
-
-### The run path
-
-The **Run** button renders in `PipelineList` but the logic lives at `App` root: `App` passes `on_run: Callback<()>` and `can_run: Signal<bool>` (derived from `source`, drives the disabled state). So the child triggers without ever holding `source`/`output_url`. On click:
-
-1. Read the source `RgbaImage` (button disabled while `None`).
-2. Map each row's `inst.to_operation()` into a `Vec<Operation>`, short-circuiting on the first `BuildError` (logged, run aborts).
-3. `pixelizer_core::apply(&pipeline, image)` runs the ops in order, each consuming the previous image by value.
-4. PNG-encode → base64 `data:` URL → `output_url`. Errors logged, not surfaced in UI.
-5. Viewport's `<img>` reactively displays it.
-
-`decode` / `encode_to_data_url` (in `viewport.rs`) are plain functions free of Leptos/DOM types — deliberate, so the heavy work can move into a web worker later without dragging UI code along.
-
-### YAML preview
-
-A toggle below Run reveals a live YAML serialization of the current pipeline (via `to_operation()` on each row, then `serde_yaml::to_string`), with copy-to-clipboard. Output is exactly what `cli` parses — copy, save as `.yaml`, runs unmodified through the CLI. Lazy: only serializes while shown, re-runs reactively.
+A deliberate consequence worth stating here: the heavy functions (`decode`, `encode_png`, `apply`) are plain, free of Leptos and DOM types, so the pipeline can move into a web worker later without dragging UI code along.
 
 ## Dependencies of note
 
 - `leptos` (csr) — reactive UI.
 - `leptos-use` — `use_element_size` drives the op card's collapse animation.
-- `gloo-file` — async read of uploaded bytes.
+- `gloo-file` — async read of uploaded bytes; `gloo-timers` — the paint-before-run yield and the "Copied!" delay.
 - `pixelizer-core` (workspace path) — the pipeline; re-exports `image`, keeping decode/encode on core's `image` version.
 - `base64` — the result `data:` URL.
-- `serde_yaml` — YAML preview; same crate+version `cli` parses with, so it round-trips. (Deprecated upstream — see ROADMAP for the consolidation plan.)
-- `yaml_serde` — parsing `palettes.yaml`. (The second YAML crate the ROADMAP wants to eliminate.)
-- `gloo-timers` — the "Copied!" revert delay.
-- `wasm-bindgen-futures` — `spawn_local` for the file read and clipboard write.
-- `web-sys` — DOM types for the file input and clipboard.
+- `serde_yaml` — YAML preview; same crate+version `cli` parses with, so it round-trips.
+- `yaml_serde` — parsing the bundled `palettes.yaml`. (Consolidating the two YAML crates is a ROADMAP item.)
+- `wasm-bindgen-futures` — `spawn_local` for the file read, the run yield, and clipboard write.
+- `web-sys` — DOM types for the file input, object URLs, and clipboard.
 - `console_error_panic_hook` — readable panics in the console.
-
-No `serde_json` — the edit path that needed it is gone.
-
-## Design notes
-
-- **Rust/WASM primary, JS as a thin interop edge.** No application logic in JS.
-- **Value-bag state, typed only at the boundary.** The trade: the edit path gives up compile-time field guarantees (the bag is `String -> ParamValue`) in exchange for deleting the entire serde translation layer. The guarantees come back at `to_operation()`, which is *about* to validate anyway. This is the load-bearing decision; see Architecture.
-- **Owned-value pipeline.** Each op takes the image by value and returns a new one — matches what they physically do (each allocates, often at new dimensions), so the image is *moved* through the chain, no in-place mutation or cloning in `apply`.
-- **State lifted to root.** Run trigger, pipeline, and viewport coordinate only through parent-held signals; children never reach into each other.

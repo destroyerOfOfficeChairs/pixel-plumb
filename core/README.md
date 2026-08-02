@@ -48,9 +48,13 @@ operations:
 
 ### Operations
 
-**`downsample`** — Nearest-neighbor downscale by `pixel_size`. After trimming, the output dimensions are evenly divisible.
-- `pixel_size: u32`: Sets the pixel size.
-- Crops the image so dimensions are evenly divisible by `pixel_size`. This avoids fractional pixels when downsampling.
+**`downsample`** — Nearest-neighbor downscale by `pixel_size`. Crops the image so dimensions are evenly divisible by `pixel_size` (avoiding fractional pixels), then samples.
+- `pixel_size: u32`
+
+**`resize`** — Nearest-neighbor resize with two modes.
+- `exact: bool` (default false) — when false, longest-side mode; when true, exact mode.
+- `max_size: u32` (longest-side mode) — the longer output dimension; the shorter scales proportionally, preserving aspect ratio.
+- `width: u32`, `height: u32` (exact mode) — resize straight to these dimensions, no aspect preservation.
 
 **`upscale`** — Nearest-neighbor upscale by an integer factor. Used at the end of a pipeline to make output pixel art viewable at sensible sizes.
 - `factor: u32`
@@ -58,31 +62,43 @@ operations:
 **`posterize`** — Reduces each color channel to N evenly-spaced levels. Produces classic banded color regions. `levels: 4` gives 64 total colors.
 - `levels: u32` (minimum 2)
 
-**`blur`** — Gaussian blur. Smooths the input so adjacent similar pixels collapse together when quantized.
+**`blur`** — Gaussian blur (computed in linear light). Smooths the input so adjacent similar pixels collapse together when quantized.
 - `sigma: f32`
 
 **`normalize`** — Stretches each channel so a chosen percentile of pixels fills the 0–255 range. Useful when the image's brightness distribution doesn't match the palette's.
 - `low: f32` — Percentile cutoff for the dark end (default 0.01)
 - `high: f32` — Percentile cutoff for the bright end (default 0.99)
 
+**`saturation`** — Scales chroma in OkLab, leaving lightness unchanged.
+- `factor: f32` (default 1.0) — 0.0 is greyscale, >1.0 more saturated.
+
+**`contrast`** — Pushes lightness away from mid-grey in OkLab, leaving chroma unchanged.
+- `factor: f32` (default 1.0) — >1.0 more contrast, <1.0 flatter.
+
 **`palette_map`** — Maps each pixel to its perceptually-nearest color in a user-specified palette, using OkLab distance.
 - `colors: Vec<String>` — Hex color strings, e.g. `"#ff0000"`
+- `preserve_alpha: bool` (optional) — keep the source alpha channel rather than making output opaque.
 - `dither` (optional) — One of:
   - `algorithm: floyd_steinberg | atkinson | jjn` plus:
     - `bleed: f32` — Fraction of quantization error to propagate (default 1.0). Lower values reduce bleeding for palettes that can't represent the input's brightness range.
-    - `clamp: bool` — Constrain the error-diffusion buffer to the palette's range. Helps when the palette can't represent brights or darks (default false).
+    - `clamp: bool` — Constrain the error-diffusion buffer to the palette's range. Helps when the palette can't represent brights or darks (default true).
   - `algorithm: bayer4 | bayer8` plus:
     - `strength: f32` — Magnitude of the per-pixel dither bias (default 32.0).
 
+**`adaptive_palette_map`** — Generates a palette *from the image* (median-cut) and maps to it. Same `dither` and `preserve_alpha` options as `palette_map`; instead of a color list, takes a count.
+- `colors: u32` (default 16, range 2–256) — the maximum palette size to generate.
+
 ## Module layout
 
-- `lib.rs` — Pipeline definition, `Operation` enum, `apply` orchestrator.
-- `color_utils.rs` — OkLab conversion, palette preparation, hex parsing.
+- `lib.rs` — Pipeline definition, `Operation` enum, `DitherConfig`, `apply` / `apply_stages` orchestrators.
+- `color_utils.rs` — OkLab conversion (both directions), palette preparation, hex parsing, chroma/contrast helpers.
 - `palette_map.rs` — Three palette-mapping algorithms (flat, error-diffusion, ordered).
-- `posterize.rs`, `blur.rs`, `normalize.rs`, `downsample.rs`, `upscale.rs` — One per pipeline operation.
-- `ui_api.rs` — Descriptor tables (parameter names, types, defaults, ranges) that let a frontend render operation and dither config UI without hardcoding it. See [DESIGN.md](DESIGN.md).
+- `adaptive_palette.rs` — Median-cut palette generation; delegates mapping to `palette_map`.
+- `downsample.rs`, `upscale.rs`, `pixelizer_resize.rs`, `posterize.rs`, `blur.rs`, `normalize.rs`, `saturation.rs`, `contrast.rs` — One per pipeline operation.
+- `encode.rs` — PNG output, choosing indexed color when the image is small and opaque.
+- `op_schema.rs` (+ `op_schema/tables.rs`, `op_schema/labels.rs`) — Descriptor tables (parameter names, types, defaults, ranges) that let a frontend render operation and dither config UI without hardcoding it. See [DESIGN.md](DESIGN.md).
 
-For the rationale behind these design choices — perceptual color matching, linear-light error diffusion, operation ordering, and more — see [DESIGN.md](DESIGN.md). For notes on a possible GPU backend, see [GPU_NOTES.md](GPU_NOTES.md).
+For the rationale behind these design choices — perceptual color matching, linear-light error diffusion, median-cut palette generation, indexed encoding, operation ordering, and more — see [DESIGN.md](DESIGN.md). For notes on a possible GPU backend, see [GPU_NOTES.md](GPU_NOTES.md).
 
 ## References
 

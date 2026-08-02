@@ -8,9 +8,7 @@ The biggest item — moving the pipeline off the main thread — sits at the bot
 
 ## In Progress
 
-### Adaptive Palette Map Op Card
-
-Create another bespoke Op Card for the adaptive palette map operation.
+Nothing yet.
 
 ---
 
@@ -53,10 +51,6 @@ The pipeline crosses this boundary as a `Vec<Operation>` (already `Serialize`), 
 Dropdowns are used in more than one place, and they have similar behavior (Only 320px height, open upwards if near the bottom of the screen, etc).
 
 Create a generic dropdown list that takes some template type.
-
-### Adaptive Palette Map
-
-Let the adaptive palette map op card have an option to sample from the source image rather than the output of the previous operation.
 
 ### Viewport polish
 
