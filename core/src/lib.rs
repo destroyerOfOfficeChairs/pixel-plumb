@@ -7,6 +7,7 @@ mod encode;
 mod normalize;
 pub mod op_schema;
 mod palette_map;
+mod pixelizer_resize;
 mod posterize;
 mod saturation;
 mod upscale;
@@ -16,6 +17,7 @@ use downsample::downsample;
 pub use encode::encode_png;
 use normalize::normalize;
 use palette_map::palette_map;
+use pixelizer_resize::pixelizer_resize;
 use posterize::posterize;
 use saturation::saturation;
 use upscale::upscale;
@@ -113,6 +115,21 @@ pub enum Operation {
         #[serde(default = "default_contrast")]
         factor: f32,
     },
+    #[serde(rename = "resize")]
+    PixelizerResize {
+        #[serde(default)]
+        exact: bool,
+        #[serde(default = "default_resize_dim")]
+        max_size: u32,
+        #[serde(default = "default_resize_dim")]
+        width: u32,
+        #[serde(default = "default_resize_dim")]
+        height: u32,
+    },
+}
+
+fn default_resize_dim() -> u32 {
+    64
 }
 
 fn default_saturation() -> f32 {
@@ -146,6 +163,12 @@ fn apply_one(op: &Operation, image: Image) -> Result<Image, PixelizerError> {
         Operation::Normalize { low, high } => normalize(image, *low, *high),
         Operation::Saturation { factor } => saturation(image, *factor),
         Operation::Contrast { factor } => contrast(image, *factor),
+        Operation::PixelizerResize {
+            exact,
+            max_size,
+            width,
+            height,
+        } => pixelizer_resize(image, *exact, *max_size, *width, *height),
     })
 }
 

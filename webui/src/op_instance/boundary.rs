@@ -44,6 +44,14 @@ impl OpInstance {
         Ok(n as f32)
     }
 
+    /// Read a Bool param (for flag core fields).
+    fn bool_field(&self, key: &str) -> Result<bool, BuildError> {
+        self.values
+            .get(key)
+            .and_then(ParamValue::as_bool)
+            .ok_or_else(|| self.miss(key, "expected a bool"))
+    }
+
     fn miss(&self, key: &str, what: &str) -> BuildError {
         BuildError {
             op: self.tag.clone(),
@@ -69,6 +77,12 @@ impl OpInstance {
             "normalize" => Operation::Normalize {
                 low: self.f32_field("low")?,
                 high: self.f32_field("high")?,
+            },
+            "resize" => Operation::PixelizerResize {
+                exact: self.bool_field("exact")?,
+                max_size: self.u32_field("max_size")?,
+                width: self.u32_field("width")?,
+                height: self.u32_field("height")?,
             },
             "saturation" => Operation::Saturation {
                 factor: self.f32_field("factor")?,

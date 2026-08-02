@@ -105,6 +105,41 @@ const POSTERIZE_PARAMS: &[ParamDescriptor] = &[ParamDescriptor {
     },
 }];
 
+const PIXELIZER_RESIZE_PARAMS: &[ParamDescriptor] = &[
+    ParamDescriptor {
+        key: "exact",
+        label: "specify exact resolution",
+        kind: ParamKind::Bool { default: false },
+    },
+    ParamDescriptor {
+        key: "max_size",
+        label: "max size",
+        kind: ParamKind::Int {
+            default: 64,
+            min: 1,
+            max: 4096,
+        },
+    },
+    ParamDescriptor {
+        key: "width",
+        label: "width",
+        kind: ParamKind::Int {
+            default: 64,
+            min: 1,
+            max: 4096,
+        },
+    },
+    ParamDescriptor {
+        key: "height",
+        label: "height",
+        kind: ParamKind::Int {
+            default: 64,
+            min: 1,
+            max: 4096,
+        },
+    },
+];
+
 const SATURATION_PARAMS: &[ParamDescriptor] = &[ParamDescriptor {
     key: "factor",
     label: "factor",
@@ -208,6 +243,11 @@ pub const OP_VARIANTS: &[VariantDescriptor] = &[
         tag: "posterize",
         label: "posterize",
         params: POSTERIZE_PARAMS,
+    },
+    VariantDescriptor {
+        tag: "resize",
+        label: "resize",
+        params: PIXELIZER_RESIZE_PARAMS,
     },
     VariantDescriptor {
         tag: "saturation",

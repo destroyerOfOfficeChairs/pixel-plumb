@@ -8,16 +8,6 @@ The biggest item — moving the pipeline off the main thread — sits at the bot
 
 ## In Progress
 
-In order of which should be done first:
-
-### Spinner
-
-Add a spinner that shows up only when the pipeline is running.
-
-### Resize Op Card
-
-Allow the user to specify the output size.
-
 ### Adaptive Palette Map Op Card
 
 Create another bespoke Op Card for the adaptive palette map operation.

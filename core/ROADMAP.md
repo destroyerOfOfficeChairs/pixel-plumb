@@ -6,19 +6,24 @@ For the rationale behind code that already exists, see [DESIGN.md](DESIGN.md). F
 
 ---
 
-## Easy Win
+## Op Schema Cleanup
 
-Make it so that image file sizes are super small. Take advantage of the fact that output images will have a limited color palette.
+Resize op — collapse flat fields into a mode enum
+
+The resize op currently carries four flat fields — exact: bool, max_size, width, height — where the bool selects which of the other three are meaningful (longest-side mode uses max_size; exact mode uses width/height). This was the pragmatic choice for v0.1: it fits the flat value-bag with no special boundary work, at the cost of the YAML carrying fields the active mode ignores, and of "exact mode with no dimensions" being a representable (if defaulted) state.
+
+The cleaner shape is a nested enum:
+
+```rust
+enum ResizeMode {
+    LongestSide { max_size: u32 },
+    Exact { width: u32, height: u32 },
+}
+```
+
+This makes illegal states unrepresentable (can't have Exact without both dimensions), and each variant serializes only its own fields — cleaner YAML, self-describing. The cost is at the boundary (to_operation): reconstructing a nested enum from the flat bag is bespoke code — read exact, then read either max_size or width+height and build the matching variant — rather than reading four flat keys.
 
 ## Operations
-
-### Resize
-
-Currently, the only way to pixelize an image is to specify the desired pixel size.
-
-Create an operation that allows the user to specify the desired output size of a pixelized image.
-
-Make controls to allow the user to preserve aspect ratio. Also, consider allowing the user to select which filtering type they want.
 
 ### `kuwahara` — edge-preserving smoothing
 
@@ -46,16 +51,6 @@ Design decisions to make:
 **Parameters.** `amount: f32` (or separate `contrast`/`brightness` scalars).
 
 **Ordering.** Before quantization, like `normalize`.
-
-### `saturation`
-
-**Why.** Perceptual nearest-color matching in `palette_map` tends to *mute* an image — boosting saturation beforehand often produces punchier pixel art. Cheap, and composes naturally with the existing OkLab machinery.
-
-**How.** Work in OkLab and scale the a/b chroma channels. Pointwise, so trivially parallel.
-
-**Parameter.** `amount: f32` — chroma multiplier.
-
-**Ordering.** Before `palette_map`.
 
 ### `hue_rotate`
 
@@ -104,17 +99,6 @@ Open question: is this a *new operation* that emits a palette into a following `
 This is a low priority item that might not be implemented. Cropping is better with drag controls, not just sliders on a card. Also, the user should crop their image before bringing it to Pixelizer.
 
 ---
-
-## Suggested priority
-
-Rough ordering by value-to-effort, for picking the project back up:
-
-1. **Adaptive palette generation** — removes the biggest friction point (palette curation), highest payoff, reuses existing infrastructure.
-2. **`kuwahara`** — best aesthetic fit for the pipeline's purpose.
-3. **`saturation` + `contrast`** — cheap, high-frequency tone control; `saturation` builds the OkLab pointwise plumbing that `hue_rotate` then reuses for free.
-4. **`sharpen`** — cheap, reuses the blur path.
-5. **`edge_detect` / `outline`** — useful but needs a design decision about coupling to `palette_map`.
-6. **`crop`, `hue_rotate`** — nice-to-haves, low urgency.
 
 ## Larger explorations
 
