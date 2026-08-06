@@ -67,6 +67,15 @@ pub fn Viewport(
             }
             source_url.set(Some(url));
         }
+        // A new image invalidates the previous run: clear the output so the new
+        // source shows (display_url prefers output over source), and drop the
+        // stale stages and stats (greys the Stages button, hides the bar,
+        // deselects, resets the bottom bar).
+        output_url.set(None);
+        stage_urls.set(Vec::new());
+        show_stages.set(false);
+        active_stage.set(None);
+        stats.set(ViewportStats::default());
         let gloo_file = gloo_file::File::from(file);
         wasm_bindgen_futures::spawn_local(async move {
             if let Ok(bytes) = gloo_file::futures::read_as_bytes(&gloo_file).await {
