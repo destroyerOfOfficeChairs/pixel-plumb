@@ -1,8 +1,6 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use leptos::prelude::*;
-use pixelizer_core::image::ImageFormat;
 use pixelizer_core::image::{self};
-use std::io::Cursor;
 
 mod bottom_bar;
 mod stages_bar;
@@ -19,9 +17,9 @@ pub fn encode_to_data_url(img: &pixelizer_core::Image) -> String {
 /// Like `encode_to_data_url` but also returns the raw PNG byte length (before
 /// base64), for the file-size stat in the bottom bar.
 pub fn encode_to_data_url_sized(img: &pixelizer_core::Image) -> (String, usize) {
-    let mut buf = Vec::new();
-    img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
-        .expect("PNG encode");
+    // Core's encode_png writes an indexed PNG when the image is small and
+    // opaque (much smaller), truecolor otherwise — same path the CLI uses.
+    let buf = pixelizer_core::encode_png(img);
     let size = buf.len();
     (
         format!("data:image/png;base64,{}", STANDARD.encode(&buf)),
@@ -69,14 +67,6 @@ pub fn Viewport(
             }
             source_url.set(Some(url));
         }
-        // A new image invalidates the previous run: clear the output so the new
-        // source shows (display_url prefers output over source), and drop the
-        // stale stages (greys the Stages button, hides the bar, deselects).
-        output_url.set(None);
-        stage_urls.set(Vec::new());
-        show_stages.set(false);
-        active_stage.set(None);
-        stats.set(ViewportStats::default());
         let gloo_file = gloo_file::File::from(file);
         wasm_bindgen_futures::spawn_local(async move {
             if let Ok(bytes) = gloo_file::futures::read_as_bytes(&gloo_file).await {

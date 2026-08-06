@@ -8,6 +8,3 @@ operations:
     colors: 16
     dither:
       algorithm: atkinson
-
-  - type: upscale
-    factor: 5

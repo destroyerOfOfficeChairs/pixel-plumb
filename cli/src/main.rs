@@ -12,7 +12,12 @@ fn main() {
     let pic = make_pic(raw_pic);
     let result = pixelizer_core::apply(&pipeline, pic);
     match result {
-        Ok(output) => output.save(output_path).expect("save output"),
+        Ok(output) => {
+            // Use core's encode_png (indexed PNG when the image is small and
+            // opaque) rather than image::save, which always writes truecolor.
+            let bytes = pixelizer_core::encode_png(&output);
+            std::fs::write(output_path, bytes).expect("write output");
+        }
         // Apparently, using thiserror could clean this up.
         Err(error) => match error {
             PixelizerError::HexParseError(e) => eprintln!("{}", e),
