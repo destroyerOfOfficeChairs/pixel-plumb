@@ -1,6 +1,6 @@
 operations:
 - type: adaptive_palette_map
-  colors: 64
+  colors: 8
   dither:
     algorithm: floyd_steinberg
     bleed: 1.0

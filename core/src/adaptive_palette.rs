@@ -8,9 +8,12 @@
 //! those). No mapping/dithering logic is duplicated.
 //!
 //! Algorithm: dampened-population median-cut over a color histogram.
-//! 1. Sample pixels and collapse to a histogram: distinct colors with counts,
-//!    so a large flat region doesn't dominate the split math by sheer pixel
-//!    count.
+//! 1. Sample pixels and collapse to a **chroma-weighted** histogram: distinct
+//!    colors, where each pixel's contribution is boosted by its colorfulness.
+//!    Saturated pixels count for more than grey ones, so vivid regions (a face,
+//!    an accent) earn palette slots that their raw pixel count alone wouldn't
+//!    win against large flat backgrounds. A baseline weight keeps flat regions
+//!    represented too.
 //! 2. Put all histogram entries in one box; repeatedly split the box with the
 //!    greatest sqrt(population) × range. The square root keeps big flat regions
 //!    from monopolizing the palette (which greys out smaller important regions
@@ -181,10 +184,31 @@ fn median_cut(image: &Image, n: usize) -> Vec<String> {
         .collect()
 }
 
-/// Sample pixels (strided) and collapse to a histogram: distinct opaque colors
-/// with pixel counts. Fully transparent pixels are skipped. Working from counts
-/// rather than raw samples means a large flat region contributes one entry with
-/// a big count, rather than dominating every box by sheer repetition.
+/// How strongly chroma (colorfulness) boosts a pixel's weight in the histogram.
+/// Each pixel contributes `1 + CHROMA_WEIGHT * chroma` (chroma in 0..1), so a
+/// fully-saturated pixel counts `1 + CHROMA_WEIGHT` times as much as a grey one.
+/// This biases palette generation toward vivid colors — a small saturated
+/// region (a face against a flat wall) earns more palette slots than its raw
+/// pixel count would grant. It's a *bias*, not a replacement: the baseline `1`
+/// guarantees every region, however flat, still contributes. Tune to taste;
+/// higher = more vivid palettes, but push too far and large smooth regions get
+/// too few entries and band.
+const CHROMA_WEIGHT: f32 = 4.0;
+
+/// A pixel's colorfulness in 0..1: the sRGB saturation proxy (max channel minus
+/// min channel). Cheap, no color-space conversion, and good enough for biasing
+/// — grey pixels score ~0, vivid pixels score near 1.
+fn chroma_proxy(r: u8, g: u8, b: u8) -> f32 {
+    let max = r.max(g).max(b) as f32;
+    let min = r.min(g).min(b) as f32;
+    (max - min) / 255.0
+}
+
+/// Sample pixels (strided) and collapse to a **chroma-weighted** histogram:
+/// distinct opaque colors with weighted counts. Saturated pixels contribute
+/// more than grey ones (see CHROMA_WEIGHT), so the palette leans toward vivid
+/// colors. Weights are accumulated as scaled integers to keep the rest of the
+/// pipeline on `(color, u32)`. Fully transparent pixels are skipped.
 fn build_histogram(image: &Image) -> Vec<([u8; 3], u32)> {
     let total = (image.width() * image.height()) as usize;
     let stride = (total / SAMPLE_TARGET).max(1);
@@ -194,7 +218,11 @@ fn build_histogram(image: &Image) -> Vec<([u8; 3], u32)> {
         if p.0[3] == 0 {
             continue; // skip fully transparent
         }
-        *counts.entry([p.0[0], p.0[1], p.0[2]]).or_insert(0) += 1;
+        let (r, g, b) = (p.0[0], p.0[1], p.0[2]);
+        // 1 + k*chroma, scaled by 16 and rounded so weights stay integers with
+        // enough resolution (a grey pixel = 16; a vivid one = 16*(1+k)).
+        let weight = ((1.0 + CHROMA_WEIGHT * chroma_proxy(r, g, b)) * 16.0).round() as u32;
+        *counts.entry([r, g, b]).or_insert(0) += weight.max(1);
     }
     counts.into_iter().collect()
 }
