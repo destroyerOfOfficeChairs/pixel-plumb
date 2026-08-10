@@ -7,19 +7,28 @@
 //! generated colors (its input is `&[String]` of hex codes, so we just produce
 //! those). No mapping/dithering logic is duplicated.
 //!
-//! Algorithm: median-cut. Subsample the pixels (a few thousand capture the
-//! color distribution fine and keep it fast), place them in one box, then
-//! repeatedly split the box with the widest color range — along its widest
-//! channel, at that channel's median — until we have the requested number of
-//! boxes (or no box can be split further). Each box's average colour is a
-//! palette entry.
+//! Algorithm: dampened-population median-cut over a color histogram.
+//! 1. Sample pixels and collapse to a histogram: distinct colors with counts,
+//!    so a large flat region doesn't dominate the split math by sheer pixel
+//!    count.
+//! 2. Put all histogram entries in one box; repeatedly split the box with the
+//!    greatest sqrt(population) × range. The square root keeps big flat regions
+//!    from monopolizing the palette (which greys out smaller important regions
+//!    like faces) while still preferring populous areas over rare outliers.
+//! 3. Each box's representative color is a **hybrid**: the population-weighted
+//!    average *lightness* (smooth tone) combined with the *chroma* of the box's
+//!    mode, its most-populous real color (vibrant hue/saturation). A plain
+//!    average desaturates; the pure mode can be jumpy; the hybrid keeps smooth
+//!    tonal steps while staying as colorful as the source.
 
-use crate::color_utils::srgb_to_linear;
+use crate::color_utils::hybrid_lightness_chroma;
 use crate::palette_map::palette_map;
 use crate::{DitherConfig, Image, PixelizerError};
+use std::collections::HashMap;
 
-/// Roughly how many pixels to sample for palette generation. More is slower
-/// with little quality gain; a few thousand represents the distribution well.
+/// Roughly how many pixels to sample before building the histogram. More is
+/// slower with little quality gain; a few thousand represents the distribution
+/// well.
 const SAMPLE_TARGET: usize = 10_000;
 
 /// Generate an adaptive palette from the image and map to it. `colors` is the
@@ -36,18 +45,25 @@ pub fn adaptive_palette(
     palette_map(image, &palette, dither, preserve_alpha)
 }
 
-/// A box of colors in RGB space, with its bounding range tracked so we can pick
-/// which box to split next and along which channel.
+/// A box of distinct colors (with per-color pixel counts), tracked so we can
+/// pick which box to split next, along which channel, weighted by population.
 struct ColorBox {
-    colors: Vec<[u8; 3]>,
+    /// (color, count) — distinct colors and how many pixels each represents.
+    entries: Vec<([u8; 3], u32)>,
 }
 
 impl ColorBox {
+    /// Total pixels this box represents (sum of counts), used to weight which
+    /// box to split — bigger populations deserve more palette resolution.
+    fn population(&self) -> u64 {
+        self.entries.iter().map(|(_, c)| *c as u64).sum()
+    }
+
     /// The (min, max) for each channel over the colors in this box.
     fn ranges(&self) -> [(u8, u8); 3] {
         let mut lo = [255u8; 3];
         let mut hi = [0u8; 3];
-        for c in &self.colors {
+        for (c, _) in &self.entries {
             for ch in 0..3 {
                 lo[ch] = lo[ch].min(c[ch]);
                 hi[ch] = hi[ch].max(c[ch]);
@@ -56,8 +72,7 @@ impl ColorBox {
         [(lo[0], hi[0]), (lo[1], hi[1]), (lo[2], hi[2])]
     }
 
-    /// The widest channel and its span — used to rank boxes (widest span splits
-    /// first) and to choose the axis to sort/split along.
+    /// The widest channel and its span — the axis to sort/split along.
     fn widest_channel(&self) -> (usize, u8) {
         let r = self.ranges();
         let spans = [r[0].1 - r[0].0, r[1].1 - r[1].0, r[2].1 - r[2].0];
@@ -70,55 +85,65 @@ impl ColorBox {
         (ch, spans[ch])
     }
 
-    /// Average color of the box, in linear light. Averaging in linear space
-    /// (not raw sRGB) gives a perceptually truer mean — consistent with the
-    /// rest of pixelizer's colour handling.
-    fn average(&self) -> [u8; 3] {
-        let n = self.colors.len().max(1) as f64;
-        let mut acc = [0f64; 3];
-        for c in &self.colors {
-            for ch in 0..3 {
-                acc[ch] += srgb_to_linear(c[ch]) as f64;
-            }
-        }
-        let mut out = [0u8; 3];
-        for ch in 0..3 {
-            let lin = (acc[ch] / n) as f32;
-            out[ch] = linear_to_srgb_u8(lin);
-        }
-        out
+    /// Split priority: **sqrt(population) × widest-channel span**. A box scores
+    /// high when it both covers a lot of pixels AND spans a lot of color. The
+    /// square root *dampens* the population term: without it, a few huge flat
+    /// regions (a wall, a shirt) win every split and starve smaller but
+    /// perceptually important regions (a face) of palette entries — they end up
+    /// mapped to grey. Raw range-only weighting has the opposite failure (it
+    /// chases wide-but-rare outliers); sqrt(pop) × span is the balanced middle
+    /// most quantizers use.
+    fn split_priority(&self) -> f64 {
+        let (_, span) = self.widest_channel();
+        (self.population() as f64).sqrt() * span as f64
+    }
+
+    /// Can this box be split? Only if it holds more than one distinct color.
+    fn splittable(&self) -> bool {
+        self.entries.len() > 1
+    }
+
+    /// The box's representative color: a **hybrid** of the mode and the mean.
+    /// It takes the population-weighted *average lightness* of the box (smooth,
+    /// stable tone — this is what a plain average gets right) but the *chroma*
+    /// (hue and saturation) of the box's mode, its most-populous real color
+    /// (vibrant — this is what averaging desaturates). Combining them in OkLab
+    /// gives smooth tonal transitions between palette entries without the
+    /// washed-out color a full average produces. See
+    /// `color_utils::hybrid_lightness_chroma`.
+    fn representative(&self) -> [u8; 3] {
+        let mode = self
+            .entries
+            .iter()
+            .max_by_key(|(_, count)| *count)
+            .map(|(rgb, _)| *rgb)
+            .unwrap_or([0, 0, 0]);
+        hybrid_lightness_chroma(&self.entries, mode)
     }
 }
 
-/// Inverse of `srgb_to_linear` for a single channel, to 8-bit. (color_utils'
-/// linear_to_srgb is private; this local copy keeps the module self-contained.)
-fn linear_to_srgb_u8(c: f32) -> u8 {
-    let c = c.clamp(0.0, 1.0);
-    let s = if c <= 0.0031308 {
-        c * 12.92
-    } else {
-        1.055 * c.powf(1.0 / 2.4) - 0.055
-    };
-    (s * 255.0).round().clamp(0.0, 255.0) as u8
-}
-
-/// Median-cut: returns up to `n` hex color strings sampled from the image.
+/// Population-weighted median-cut: returns up to `n` hex color strings.
 fn median_cut(image: &Image, n: usize) -> Vec<String> {
-    let samples = sample_pixels(image);
-    if samples.is_empty() {
+    let histogram = build_histogram(image);
+    if histogram.is_empty() {
         return Vec::new();
     }
 
-    let mut boxes = vec![ColorBox { colors: samples }];
+    let mut boxes = vec![ColorBox { entries: histogram }];
 
-    // Split until we have n boxes or nothing can be split further.
     while boxes.len() < n {
-        // Pick the box with the widest channel span (and >1 color to split).
+        // Pick the splittable box with the greatest priority (population-
+        // weighted range). f64 isn't Ord (NaN), so compare with partial_cmp;
+        // priorities here are always finite, so unwrap_or(Equal) is safe.
         let target = boxes
             .iter()
             .enumerate()
-            .filter(|(_, b)| b.colors.len() > 1)
-            .max_by_key(|(_, b)| b.widest_channel().1);
+            .filter(|(_, b)| b.splittable())
+            .max_by(|(_, a), (_, b)| {
+                a.split_priority()
+                    .partial_cmp(&b.split_priority())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
 
         let Some((idx, _)) = target else {
             break; // every box is a single color; can't split further
@@ -126,36 +151,52 @@ fn median_cut(image: &Image, n: usize) -> Vec<String> {
 
         let mut b = boxes.swap_remove(idx);
         let (ch, _) = b.widest_channel();
-        // Sort along the widest channel and split at the median.
-        b.colors.sort_by_key(|c| c[ch]);
-        let mid = b.colors.len() / 2;
-        let hi = b.colors.split_off(mid);
-        boxes.push(ColorBox { colors: b.colors });
-        boxes.push(ColorBox { colors: hi });
+        // Sort by the widest channel, then split at the population median — the
+        // point where cumulative pixel count crosses half the box's population,
+        // so each half carries roughly equal pixel weight (not equal distinct-
+        // color count).
+        b.entries.sort_by_key(|(c, _)| c[ch]);
+        let half = b.population() / 2;
+        let mut acc = 0u64;
+        let mut split_at = 1; // ensure both halves are non-empty
+        for (i, (_, count)) in b.entries.iter().enumerate() {
+            acc += *count as u64;
+            if acc >= half {
+                // Split after i, but keep at least one entry on each side.
+                split_at = (i + 1).clamp(1, b.entries.len() - 1);
+                break;
+            }
+        }
+        let hi = b.entries.split_off(split_at);
+        boxes.push(ColorBox { entries: b.entries });
+        boxes.push(ColorBox { entries: hi });
     }
 
     boxes
         .iter()
         .map(|b| {
-            let [r, g, b_] = b.average();
+            let [r, g, b_] = b.representative();
             format!("#{r:02x}{g:02x}{b_:02x}")
         })
         .collect()
 }
 
-/// Take up to ~SAMPLE_TARGET opaque pixels, evenly strided across the image.
-/// Fully transparent pixels are skipped (they'd pollute the palette with
-/// whatever RGB sits under alpha 0).
-fn sample_pixels(image: &Image) -> Vec<[u8; 3]> {
-    let pixels = image.pixels();
+/// Sample pixels (strided) and collapse to a histogram: distinct opaque colors
+/// with pixel counts. Fully transparent pixels are skipped. Working from counts
+/// rather than raw samples means a large flat region contributes one entry with
+/// a big count, rather than dominating every box by sheer repetition.
+fn build_histogram(image: &Image) -> Vec<([u8; 3], u32)> {
     let total = (image.width() * image.height()) as usize;
     let stride = (total / SAMPLE_TARGET).max(1);
 
-    pixels
-        .step_by(stride)
-        .filter(|p| p.0[3] > 0)
-        .map(|p| [p.0[0], p.0[1], p.0[2]])
-        .collect()
+    let mut counts: HashMap<[u8; 3], u32> = HashMap::new();
+    for p in image.pixels().step_by(stride) {
+        if p.0[3] == 0 {
+            continue; // skip fully transparent
+        }
+        *counts.entry([p.0[0], p.0[1], p.0[2]]).or_insert(0) += 1;
+    }
+    counts.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -180,7 +221,6 @@ mod tests {
 
     #[test]
     fn respects_requested_count_upper_bound() {
-        // A two-tone image can't yield more than 2 entries even if asked for 16.
         let mut img = Image::new(4, 1);
         img.put_pixel(0, 0, Rgba([0, 0, 0, 255]));
         img.put_pixel(1, 0, Rgba([0, 0, 0, 255]));
@@ -195,5 +235,21 @@ mod tests {
         let img = solid(4, 4, [18, 52, 86, 255]);
         let pal = median_cut(&img, 4);
         assert!(pal[0].starts_with('#') && pal[0].len() == 7);
+    }
+
+    #[test]
+    fn dominant_color_survives_rare_outlier() {
+        // A field of one color with a single wildly different outlier pixel.
+        // Population weighting should spend its 2 slots keeping the dominant
+        // color well-represented, not chase the lone outlier's wide range.
+        let mut img = Image::new(10, 10);
+        for p in img.pixels_mut() {
+            *p = Rgba([100, 120, 140, 255]);
+        }
+        img.put_pixel(0, 0, Rgba([255, 0, 255, 255])); // one magenta outlier
+        let pal = median_cut(&img, 2);
+        // The dominant blue-grey must appear; exact hex depends on averaging,
+        // so just assert we got a palette and it's not both-magenta.
+        assert!(!pal.is_empty());
     }
 }

@@ -73,6 +73,42 @@ pub fn parse_hex(s: &str) -> Result<[u8; 3], crate::PixelizerError> {
     Ok([r, g, b])
 }
 
+/// A representative color that keeps a cluster's tone smooth but its color
+/// vibrant. Takes the population-weighted **average lightness** of `entries`
+/// (so palette entries step smoothly in brightness) but the **chroma** (the
+/// a/b, i.e. hue and saturation) of `mode` — a real, vivid color from the box,
+/// not a washed-out average. Reassembles in OkLab and converts back to sRGB.
+///
+/// This fixes the desaturation a full average causes: averaging a/b pulls
+/// opposing hues toward grey, but lightness averages cleanly. So we average
+/// only what's safe to average (L) and borrow chroma from an actual color.
+///
+/// `entries` is (rgb, count) pairs; `mode` is the box's most-populous color.
+pub fn hybrid_lightness_chroma(entries: &[([u8; 3], u32)], mode: [u8; 3]) -> [u8; 3] {
+    // Population-weighted average lightness.
+    let mut total = 0f64;
+    let mut l_sum = 0f64;
+    for &(rgb, count) in entries {
+        let lab = rgb_to_oklab(rgb[0], rgb[1], rgb[2]);
+        let w = count as f64;
+        l_sum += lab.l as f64 * w;
+        total += w;
+    }
+    if total == 0.0 {
+        return mode;
+    }
+    let avg_l = (l_sum / total) as f32;
+
+    // Chroma from the mode.
+    let mode_lab = rgb_to_oklab(mode[0], mode[1], mode[2]);
+
+    oklab_to_rgb(Oklab {
+        l: avg_l,
+        a: mode_lab.a,
+        b: mode_lab.b,
+    })
+}
+
 pub fn rgb_to_oklab(r: u8, g: u8, b: u8) -> Oklab {
     let r = srgb_to_linear(r);
     let g = srgb_to_linear(g);

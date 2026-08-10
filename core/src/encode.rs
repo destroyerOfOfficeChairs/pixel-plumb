@@ -89,6 +89,13 @@ fn encode_indexed(image: &Image, plan: &IndexedPlan) -> Vec<u8> {
         encoder.set_color(png::ColorType::Indexed);
         encoder.set_depth(png::BitDepth::Eight); // 8-bit indices (up to 256 entries)
         encoder.set_palette(plte);
+        // Best deflate. For *indexed* data, PNG filtering usually hurts —
+        // palette indices aren't spatially continuous the way color channels
+        // are (index 3 and index 4 needn't be visually adjacent), so filtering
+        // scrambles rather than smooths. NoFilter + Best compression is the
+        // right combination for indexed images.
+        encoder.set_compression(png::Compression::Best);
+        encoder.set_filter(png::FilterType::NoFilter);
         let mut writer = encoder.write_header().expect("PNG header");
         writer.write_image_data(&indices).expect("PNG indexed data");
     }
@@ -104,6 +111,12 @@ fn encode_truecolor(image: &Image) -> Vec<u8> {
         let mut encoder = png::Encoder::new(Cursor::new(&mut out), w, h);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
+        // Best deflate, plus adaptive filtering — for truecolor (continuous
+        // color channels) PNG filters genuinely help, and Adaptive picks the
+        // best filter per scanline.
+        encoder.set_compression(png::Compression::Best);
+        encoder.set_filter(png::FilterType::Paeth);
+        encoder.set_adaptive_filter(png::AdaptiveFilterType::Adaptive);
         let mut writer = encoder.write_header().expect("PNG header");
         writer
             .write_image_data(image.as_raw())
