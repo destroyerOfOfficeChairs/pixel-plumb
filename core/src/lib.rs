@@ -6,6 +6,7 @@ mod contrast;
 mod downsample;
 mod encode;
 mod normalize;
+mod octree;
 pub mod op_schema;
 mod palette_map;
 mod pixelizer_resize;
