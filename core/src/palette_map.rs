@@ -6,6 +6,7 @@ use crate::color_utils::BayerMatrix;
 use crate::color_utils::Oklab;
 use crate::color_utils::PaletteData;
 use crate::color_utils::nearest_oklab;
+use crate::color_utils::nearest_rgb;
 use crate::color_utils::prepare_palette;
 use crate::color_utils::quantize;
 use crate::color_utils::rgb_to_oklab;
@@ -92,10 +93,11 @@ pub fn palette_map(
     colors: &[String],
     dither: Option<DitherConfig>,
     preserve_alpha: Option<bool>,
+    space: crate::color_utils::MappingSpace,
 ) -> Result<Image, crate::PixelizerError> {
     let foo: PaletteData = prepare_palette(colors)?;
     match dither {
-        None => palette_map_flat(image, foo.rgb, foo.lab, preserve_alpha),
+        None => palette_map_flat(image, foo.rgb, foo.lab, preserve_alpha, space),
         Some(DitherConfig::FloydSteinberg { bleed, clamp }) => palette_map_diffuse(
             image,
             FLOYD_STEINBERG,
@@ -106,6 +108,7 @@ pub fn palette_map(
             bleed,
             clamp,
             preserve_alpha,
+            space,
         ),
         Some(DitherConfig::Atkinson { bleed, clamp }) => palette_map_diffuse(
             image,
@@ -117,6 +120,7 @@ pub fn palette_map(
             bleed,
             clamp,
             preserve_alpha,
+            space,
         ),
         Some(DitherConfig::Jjn { bleed, clamp }) => palette_map_diffuse(
             image,
@@ -128,12 +132,13 @@ pub fn palette_map(
             bleed,
             clamp,
             preserve_alpha,
+            space,
         ),
         Some(DitherConfig::Bayer4 { strength }) => {
-            palette_map_ordered(image, foo.rgb, foo.lab, strength, 4, preserve_alpha)
+            palette_map_ordered(image, foo.rgb, foo.lab, strength, 4, preserve_alpha, space)
         }
         Some(DitherConfig::Bayer8 { strength }) => {
-            palette_map_ordered(image, foo.rgb, foo.lab, strength, 8, preserve_alpha)
+            palette_map_ordered(image, foo.rgb, foo.lab, strength, 8, preserve_alpha, space)
         }
     }
 }
@@ -143,6 +148,7 @@ pub fn palette_map_flat(
     rgb: Vec<[u8; 3]>,
     lab: Vec<Oklab>,
     preserve_alpha: Option<bool>,
+    space: crate::color_utils::MappingSpace,
 ) -> Result<Image, crate::PixelizerError> {
     let (w, h) = image.dimensions();
     let mut out = Image::new(w, h);
@@ -154,9 +160,10 @@ pub fn palette_map_flat(
         if !preserve_alpha.unwrap_or_default() {
             a = 255;
         }
-        let idx = *cache
-            .entry([r, g, b])
-            .or_insert_with(|| nearest_oklab(&lab, rgb_to_oklab(r, g, b)));
+        let idx = *cache.entry([r, g, b]).or_insert_with(|| match space {
+            crate::color_utils::MappingSpace::Oklab => nearest_oklab(&lab, rgb_to_oklab(r, g, b)),
+            crate::color_utils::MappingSpace::Rgb => nearest_rgb(&rgb, [r, g, b]),
+        });
         let [pr, pg, pb] = rgb[idx];
         out.put_pixel(x, y, image::Rgba([pr, pg, pb, a]));
     }
@@ -173,6 +180,7 @@ pub fn palette_map_diffuse(
     bleed: f32,
     clamp: bool,
     preserve_alpha: Option<bool>,
+    space: crate::color_utils::MappingSpace,
 ) -> Result<Image, crate::PixelizerError> {
     let (w, h) = img.dimensions();
 
@@ -222,7 +230,7 @@ pub fn palette_map_diffuse(
             } else {
                 buf[idx(x, y)]
             };
-            let (pal_idx, error) = quantize(&lab, &linear, pixel, bleed);
+            let (pal_idx, error) = quantize(&lab, &rgb, &linear, pixel, bleed, space);
             let [pr, pg, pb] = rgb[pal_idx];
             out.put_pixel(x, y, image::Rgba([pr, pg, pb, alpha[idx(x, y)]]));
 
@@ -249,6 +257,7 @@ pub fn palette_map_ordered(
     strength: f32,
     size: usize,
     preserve_alpha: Option<bool>,
+    space: crate::color_utils::MappingSpace,
 ) -> Result<Image, crate::PixelizerError> {
     let (w, h) = image.dimensions();
     let mut out = Image::new(w, h);
@@ -268,13 +277,19 @@ pub fn palette_map_ordered(
             BayerMatrix::Four(m) => m[(y as usize) % size][(x as usize) % size] * strength,
             BayerMatrix::Eight(m) => m[(y as usize) % size][(x as usize) % size] * strength,
         };
-        // let bias = matrix[(y as usize) % size][(x as usize) % size] * strength;
 
         let biased_r = (r as f32 + bias).clamp(0.0, 255.0) as u8;
         let biased_g = (g as f32 + bias).clamp(0.0, 255.0) as u8;
         let biased_b = (b as f32 + bias).clamp(0.0, 255.0) as u8;
 
-        let idx = nearest_oklab(&lab, rgb_to_oklab(biased_r, biased_g, biased_b));
+        let idx = match space {
+            crate::color_utils::MappingSpace::Oklab => {
+                nearest_oklab(&lab, rgb_to_oklab(biased_r, biased_g, biased_b))
+            }
+            crate::color_utils::MappingSpace::Rgb => {
+                nearest_rgb(&rgb, [biased_r, biased_g, biased_b])
+            }
+        };
         let [pr, pg, pb] = rgb[idx];
         out.put_pixel(x, y, image::Rgba([pr, pg, pb, a]));
     }

@@ -15,6 +15,7 @@ mod saturation;
 mod upscale;
 use adaptive_palette::adaptive_palette;
 use blur::blur;
+pub use color_utils::MappingSpace;
 use contrast::contrast;
 use downsample::downsample;
 pub use encode::encode_png;
@@ -164,19 +165,19 @@ fn default_high_percentile() -> f32 {
 
 /// Apply one operation. The single dispatch point, shared by `apply` and
 /// `apply_stages` so the match can't drift between them.
-fn apply_one(op: &Operation, image: Image) -> Result<Image, PixelizerError> {
+fn apply_one(op: &Operation, image: Image, space: MappingSpace) -> Result<Image, PixelizerError> {
     Ok(match op {
         Operation::Downsample { pixel_size } => downsample(*pixel_size, image),
         Operation::PaletteMap {
             colors,
             dither,
             preserve_alpha,
-        } => palette_map(image, colors, *dither, *preserve_alpha)?,
+        } => palette_map(image, colors, *dither, *preserve_alpha, space)?,
         Operation::AdaptivePaletteMap {
             colors,
             dither,
             preserve_alpha,
-        } => adaptive_palette(image, *colors, *dither, *preserve_alpha)?,
+        } => adaptive_palette(image, *colors, *dither, *preserve_alpha, space)?,
         Operation::Upscale { factor } => upscale(image, *factor),
         Operation::Posterize { levels } => posterize(image, *levels)?,
         Operation::Blur { sigma } => blur(image, *sigma),
@@ -192,20 +193,32 @@ fn apply_one(op: &Operation, image: Image) -> Result<Image, PixelizerError> {
     })
 }
 
-pub fn apply(pipeline: &Pipeline, mut image: Image) -> Result<Image, PixelizerError> {
+/// Run the pipeline with perceptual (OkLab) mapping — the default.
+pub fn apply(pipeline: &Pipeline, image: Image) -> Result<Image, PixelizerError> {
+    apply_with_space(pipeline, image, MappingSpace::Oklab)
+}
+
+/// Run the pipeline, choosing the palette-mapping color space. Only the
+/// palette-mapping ops are affected; everything else ignores `space`.
+pub fn apply_with_space(
+    pipeline: &Pipeline,
+    mut image: Image,
+    space: MappingSpace,
+) -> Result<Image, PixelizerError> {
     for op in &pipeline.operations {
-        image = apply_one(op, image)?;
+        image = apply_one(op, image, space)?;
     }
     Ok(image)
 }
 
 /// Run the pipeline, returning the image after *each* operation, in order.
-/// `stages[i]` is the result of ops `0..=i`. One clone per stage.
+/// `stages[i]` is the result of ops `0..=i`. One clone per stage. Uses the
+/// default (OkLab) mapping — the webui's stage preview never needs RGB.
 pub fn apply_stages(pipeline: &Pipeline, mut image: Image) -> Result<Vec<Image>, PixelizerError> {
     let mut stages = Vec::with_capacity(pipeline.operations.len());
     for op in &pipeline.operations {
-        image = apply_one(op, image)?;
-        stages.push(image.clone()); // keep this stage; `image` continues to the next op
+        image = apply_one(op, image, MappingSpace::Oklab)?;
+        stages.push(image.clone());
     }
     Ok(stages)
 }

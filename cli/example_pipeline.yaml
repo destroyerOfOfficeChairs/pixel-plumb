@@ -1,9 +1,11 @@
 operations:
-# - type: downsample
-#   pixel_size: 16
+- type: downsample
+  pixel_size: 8
 - type: adaptive_palette_map
   colors: 16
   dither:
     algorithm: floyd_steinberg
     bleed: 1.0
     clamp: true
+- type: upscale
+  factor: 8

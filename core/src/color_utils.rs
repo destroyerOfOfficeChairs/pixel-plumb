@@ -13,6 +13,20 @@ pub struct Oklab {
     b: f32,
 }
 
+/// Which color space palette *mapping* measures "nearest" in. This affects only
+/// which palette entry each pixel maps to — not palette selection, not dithering
+/// math (error diffusion stays in linear light either way).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum MappingSpace {
+    /// Perceptual nearest (OkLab distance). The default, and Pixel Plumb's
+    /// whole thesis: equal numeric distance = equal perceived difference.
+    #[default]
+    Oklab,
+    /// Naive nearest (RGB Euclidean distance). Provided mainly to demonstrate,
+    /// by contrast, what perceptual mapping buys you.
+    Rgb,
+}
+
 pub enum BayerMatrix<'a> {
     Four(&'a [[f32; 4]; 4]),
     Eight(&'a [[f32; 8]; 8]),
@@ -227,6 +241,25 @@ pub fn nearest_oklab(palette: &[Oklab], target: Oklab) -> usize {
         .unwrap()
 }
 
+/// Index of the palette entry closest to `target` by straight sRGB Euclidean
+/// distance. The naive counterpart to `nearest_oklab` — it treats the RGB cube
+/// as if equal steps looked equally different, which they don't.
+pub fn nearest_rgb(palette_rgb: &[[u8; 3]], target: [u8; 3]) -> usize {
+    let mut best = 0usize;
+    let mut best_d = i32::MAX;
+    for (i, p) in palette_rgb.iter().enumerate() {
+        let dr = p[0] as i32 - target[0] as i32;
+        let dg = p[1] as i32 - target[1] as i32;
+        let db = p[2] as i32 - target[2] as i32;
+        let d = dr * dr + dg * dg + db * db;
+        if d < best_d {
+            best_d = d;
+            best = i;
+        }
+    }
+    best
+}
+
 fn linear_to_srgb(c: f32) -> u8 {
     let c = c.clamp(0.0, 1.0);
     let v = if c <= 0.0031308 {
@@ -248,15 +281,20 @@ pub fn srgb_to_linear(c: u8) -> f32 {
 
 pub fn quantize(
     palette_lab: &[Oklab],
+    palette_rgb: &[[u8; 3]],
     palette_linear: &[[f32; 3]],
     pixel_linear: [f32; 3],
     error_damping: f32,
+    space: MappingSpace,
 ) -> (usize, [f32; 3]) {
     let [lr, lg, lb] = pixel_linear;
     let r_u8 = linear_to_srgb(lr);
     let g_u8 = linear_to_srgb(lg);
     let b_u8 = linear_to_srgb(lb);
-    let idx = nearest_oklab(palette_lab, rgb_to_oklab(r_u8, g_u8, b_u8));
+    let idx = match space {
+        MappingSpace::Oklab => nearest_oklab(palette_lab, rgb_to_oklab(r_u8, g_u8, b_u8)),
+        MappingSpace::Rgb => nearest_rgb(palette_rgb, [r_u8, g_u8, b_u8]),
+    };
     let [plr, plg, plb] = palette_linear[idx];
     (
         idx,
