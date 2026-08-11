@@ -308,6 +308,38 @@ pub fn octree_palette(image: &crate::Image, target_colors: usize) -> Vec<[u8; 3]
     tree.assign() // phase 3: read colors out
 }
 
+/// Like `octree_palette`, but subdivides *OkLab* space instead of RGB. Each
+/// pixel is mapped into a normalized-OkLab cube before classification, so the
+/// tree groups colors by *perceptual* proximity and the pruning error `E`
+/// (squared distance to cube center) is a perceptual distance — pruning removes
+/// the perceptually cheapest distinctions. The octree itself is unchanged; only
+/// the coordinates going in and the palette coming out are transformed.
+///
+/// This is the same idea the ImageMagick write-up notes ("distances in color
+/// spaces such as YUV or YIQ correspond to perceptual color differences more
+/// closely than RGB"), done here in OkLab.
+pub fn octree_palette_oklab(image: &crate::Image, target_colors: usize) -> Vec<[u8; 3]> {
+    use crate::color_utils::{norm_oklab_to_rgb, rgb_to_norm_oklab};
+
+    let target = target_colors.max(1);
+    let mut tree = Octree::with_depth(depth_for_colors(target));
+
+    // Phase 1: classify, but on normalized-OkLab coordinates.
+    for p in image.pixels() {
+        if p.0[3] == 0 {
+            continue;
+        }
+        tree.classify(rgb_to_norm_oklab(p.0[0], p.0[1], p.0[2]));
+    }
+
+    // Phase 2: reduce (unchanged — the tree doesn't know or care what space
+    // its coordinates came from; error is now perceptual because the space is).
+    tree.reduce(target);
+
+    // Phase 3: assign, then map the normalized-OkLab means back to sRGB.
+    tree.assign().into_iter().map(norm_oklab_to_rgb).collect()
+}
+
 impl Default for Octree {
     fn default() -> Self {
         Self::new()
@@ -497,5 +529,21 @@ mod tests {
         img.put_pixel(1, 1, Rgba([200, 40, 40, 255]));
         let pal = octree_palette(&img, 2);
         assert!(pal.len() <= 2 && !pal.is_empty());
+    }
+
+    #[test]
+    fn octree_palette_oklab_client_flow() {
+        // The OkLab variant should also produce a valid, in-range palette.
+        use image::{Rgba, RgbaImage};
+        let mut img = RgbaImage::new(2, 2);
+        img.put_pixel(0, 0, Rgba([200, 40, 40, 255]));
+        img.put_pixel(1, 0, Rgba([40, 200, 40, 255]));
+        img.put_pixel(0, 1, Rgba([40, 40, 200, 255]));
+        img.put_pixel(1, 1, Rgba([200, 40, 40, 255]));
+        let pal = octree_palette_oklab(&img, 3);
+        assert!(!pal.is_empty() && pal.len() <= 3);
+        // All entries are real u8 triples by construction; just sanity-check we
+        // got something non-degenerate (not all identical black).
+        assert!(pal.iter().any(|c| c != &[0, 0, 0]));
     }
 }

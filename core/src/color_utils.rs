@@ -1,5 +1,11 @@
 use crate::PixelizerError::HexParseError;
 use crate::PixelizerError::NoColorsError;
+
+/// Half-width of the a/b normalization range. The sRGB gamut's OkLab a and b
+/// both fall within about ±0.32; 0.35 covers all of it with a little margin, so
+/// no real color clips. L is already in [0, 1] and needs no such bound.
+const OKLAB_AB_BOUND: f32 = 0.35;
+
 #[derive(Clone, Copy)]
 pub struct Oklab {
     l: f32,
@@ -107,6 +113,32 @@ pub fn hybrid_lightness_chroma(entries: &[([u8; 3], u32)], mode: [u8; 3]) -> [u8
         a: mode_lab.a,
         b: mode_lab.b,
     })
+}
+
+/// Map an sRGB color into a normalized-OkLab cube as `[u8; 3]`, so the octree
+/// (which subdivides a 0..255 cube) can quantize in *perceptual* space instead
+/// of RGB. L maps [0,1] -> [0,255]; a and b map [-BOUND, +BOUND] -> [0,255].
+/// Values are clamped, so out-of-gamut inputs stay in range.
+pub fn rgb_to_norm_oklab(r: u8, g: u8, b: u8) -> [u8; 3] {
+    let c = rgb_to_oklab(r, g, b);
+    let nl = (c.l * 255.0).round().clamp(0.0, 255.0) as u8;
+    let na = ((c.a + OKLAB_AB_BOUND) / (2.0 * OKLAB_AB_BOUND) * 255.0)
+        .round()
+        .clamp(0.0, 255.0) as u8;
+    let nb = ((c.b + OKLAB_AB_BOUND) / (2.0 * OKLAB_AB_BOUND) * 255.0)
+        .round()
+        .clamp(0.0, 255.0) as u8;
+    [nl, na, nb]
+}
+
+/// Inverse of `rgb_to_norm_oklab`: a normalized-OkLab `[u8; 3]` back to sRGB.
+/// Used at assignment to turn the octree's averaged (normalized-OkLab) palette
+/// entries back into real colors.
+pub fn norm_oklab_to_rgb(n: [u8; 3]) -> [u8; 3] {
+    let l = n[0] as f32 / 255.0;
+    let a = n[1] as f32 / 255.0 * (2.0 * OKLAB_AB_BOUND) - OKLAB_AB_BOUND;
+    let b = n[2] as f32 / 255.0 * (2.0 * OKLAB_AB_BOUND) - OKLAB_AB_BOUND;
+    oklab_to_rgb(Oklab { l, a, b })
 }
 
 pub fn rgb_to_oklab(r: u8, g: u8, b: u8) -> Oklab {

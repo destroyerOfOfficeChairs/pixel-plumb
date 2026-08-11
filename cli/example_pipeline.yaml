@@ -1,6 +1,8 @@
 operations:
+# - type: downsample
+#   pixel_size: 16
 - type: adaptive_palette_map
-  colors: 8
+  colors: 16
   dither:
     algorithm: floyd_steinberg
     bleed: 1.0
