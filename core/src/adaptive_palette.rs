@@ -44,8 +44,12 @@ pub fn adaptive_palette(
     dither: Option<DitherConfig>,
     preserve_alpha: Option<bool>,
 ) -> Result<Image, PixelizerError> {
-    let palette = median_cut(&image, colors.max(1) as usize);
-    palette_map(image, &palette, dither, preserve_alpha)
+    let rgb = crate::octree::octree_palette(&image, colors.max(1) as usize);
+    let hex: Vec<String> = rgb
+        .iter()
+        .map(|[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}"))
+        .collect();
+    palette_map(image, &hex, dither, preserve_alpha)
 }
 
 /// A box of distinct colors (with per-color pixel counts), tracked so we can
