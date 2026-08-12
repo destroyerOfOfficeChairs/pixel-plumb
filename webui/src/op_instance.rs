@@ -45,6 +45,10 @@ pub enum ParamValue {
     Bool(bool),
     Palette(Vec<String>),
     Dither(Option<DitherChoice>),
+    /// A one-of-N choice, holding the selected serde tag (e.g. "oklab"). Backs
+    /// `ParamKind::Enum` params like mapping space. Unlike `Dither` it carries
+    /// no sub-parameters — just the chosen tag.
+    Enum(String),
 }
 
 impl ParamValue {
@@ -59,6 +63,13 @@ impl ParamValue {
         match self {
             ParamValue::Bool(b) => Some(*b),
             ParamValue::Num(n) => Some(*n != 0.0),
+            _ => None,
+        }
+    }
+    /// The selected tag for an `Enum` value, if this is one.
+    pub fn as_enum(&self) -> Option<&str> {
+        match self {
+            ParamValue::Enum(tag) => Some(tag),
             _ => None,
         }
     }

@@ -54,6 +54,14 @@ pub enum ParamKind {
     Palette { colors: [&'static str; 2] },
     /// The palette-map dither param. ...
     Dither { default_tag: &'static str },
+    /// A generic one-of-N choice, rendered as a dropdown. `options` is a list of
+    /// (serde tag, human label) pairs; `default_tag` is the initially-selected
+    /// tag and must appear in `options`. Unlike `Dither`, the chosen variant
+    /// carries no sub-parameters — it's a plain enum value (e.g. mapping space).
+    Enum {
+        options: &'static [(&'static str, &'static str)],
+        default_tag: &'static str,
+    },
 }
 
 /// One selectable variant (e.g. one dither algorithm), with its parameters.
@@ -103,6 +111,30 @@ mod tests {
                         known(default_tag),
                         "op '{}' param '{}' has default_tag '{}' \
                          with no matching DITHER_VARIANTS entry",
+                        variant.tag,
+                        p.key,
+                        default_tag,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every `ParamKind::Enum { options, default_tag }` must have its default_tag
+    /// present in its own options list — otherwise the dropdown would open with a
+    /// selection that isn't offered. Catches typos at `cargo test` time.
+    #[test]
+    fn enum_default_tags_are_in_options() {
+        for variant in OP_VARIANTS {
+            for p in variant.params {
+                if let ParamKind::Enum {
+                    options,
+                    default_tag,
+                } = p.kind
+                {
+                    assert!(
+                        options.iter().any(|(tag, _)| *tag == default_tag),
+                        "op '{}' param '{}' default_tag '{}' is not in its options",
                         variant.tag,
                         p.key,
                         default_tag,

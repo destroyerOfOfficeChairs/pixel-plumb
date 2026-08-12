@@ -7,5 +7,6 @@ operations:
     algorithm: floyd_steinberg
     bleed: 1.0
     clamp: true
+  mapping_space: rgb
 - type: upscale
   factor: 6

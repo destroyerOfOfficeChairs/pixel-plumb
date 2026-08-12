@@ -32,7 +32,7 @@ A generic slider component doesn't know that "the value it's editing" is `Operat
 The schema types are small:
 
 - `ParamDescriptor` — one param: its `key` (the field name), `label` (human string), and `kind`.
-- `ParamKind` — an enum of what a param *is*: `Float { default, min, max, step }`, `Int { ... }`, `Bool { default }`, `Palette { colors }`, `Dither { default_tag }`. This is where widget-relevant metadata lives — the min/max/step a slider needs, which the type system alone can't express.
+- `ParamKind` — an enum of what a param *is*: `Float { default, min, max, step }`, `Int { ... }`, `Bool { default }`, `Palette { colors }`, `Dither { default_tag }`, `Enum { options, default_tag }`. This is where widget-relevant metadata lives — the min/max/step a slider needs, the options a dropdown offers, which the type system alone can't express. `Enum` is the generic one-of-N choice (e.g. a palette op's `mapping_space`), distinct from `Dither` in that the chosen value carries no sub-parameters.
 - `VariantDescriptor` — one op or dither variant: its `tag`, `label`, and `params` (a slice of `ParamDescriptor`).
 
 Then two big `const` tables (in `tables.rs`):
@@ -42,7 +42,7 @@ Then two big `const` tables (in `tables.rs`):
 
 These tables are the **single source of truth for what a param is.** The types file (`op_schema.rs`) says what shape the truth takes; the tables file has the actual data; and `labels.rs` has small helpers (`label_for_tag`, `all_op_menu`) that answer human-string questions.
 
-A test guards the one place strings could drift silently: `dither_default_tags_exist` checks that every `ParamKind::Dither { default_tag }` names a real entry in `DITHER_VARIANTS`. Typo it and `cargo test` fails.
+A test guards the one place strings could drift silently: `dither_default_tags_exist` checks that every `ParamKind::Dither { default_tag }` names a real entry in `DITHER_VARIANTS`, and `enum_default_tags_are_in_options` checks that every `ParamKind::Enum`'s `default_tag` is one of its own options. Typo either and `cargo test` fails.
 
 The rest of `core` is unchanged from a design perspective — the `Operation` enum, `apply()`, the actual image operations. `op_schema` is *additional* metadata riding alongside the runtime types, not a replacement for them.
 
@@ -61,12 +61,13 @@ pub enum ParamValue {
     Bool(bool),
     Palette(Vec<String>),
     Dither(Option<DitherChoice>),
+    Enum(String),                                   // "mapping_space" → Enum("rgb")
 }
 ```
 
 An op instance is a tag (which op it is) plus a map from field name to value. Every widget in the UI reads and writes `values[key]` — the slider for sigma does `values.get("sigma")` and, on drag, `values.insert("sigma", Num(new_value))`. No serde. No knowledge of which typed variant this is. Just: read a key, write a key.
 
-The four arms of `ParamValue` map to the five `ParamKind`s: `Float` and `Int` both fold into `Num(f64)` (the schema carries which is which), `Bool` becomes `Bool`, `Palette` becomes `Palette`, `Dither` becomes `Dither` (nesting a mini-instance for the chosen algorithm and its params).
+The arms of `ParamValue` map onto the `ParamKind`s: `Float` and `Int` both fold into `Num(f64)` (the schema carries which is which), `Bool` becomes `Bool`, `Palette` becomes `Palette`, `Dither` becomes `Dither` (nesting a mini-instance for the chosen algorithm and its params), and `Enum` becomes `Enum(String)` holding the selected tag.
 
 The webui's source-of-truth signals live at the root (in `main.rs` / `App`):
 
@@ -103,17 +104,18 @@ for param in variant.params {
         ParamKind::Float { .. } => <FloatSlider .../>,
         ParamKind::Int { .. } => <IntSlider .../>,
         ParamKind::Bool { .. } => <BoolWidget .../>,
+        ParamKind::Enum { .. } => <EnumWidget .../>,   // generic dropdown
         // ...
     }
 }
 ```
 
-Adding a scalar op is one row in `OP_VARIANTS`. That's the payoff.
+Adding a scalar op is one row in `OP_VARIANTS`. That's the payoff — and it extends past scalars: `Enum` is generically renderable too, so a one-of-N choice like the palette ops' `mapping_space` was added as a schema row plus a reusable `EnumWidget`, no bespoke code. (`Palette` and `Dither` are the kinds that *can't* be generic — a color-picker grid and a nested variant-with-sub-params — so they live only in bespoke cards.)
 
 Three ops have **bespoke** config cards, dispatched by tag in `config.rs` before the generic fallback:
 
-- `palette_map` — non-scalar params (a palette editor, a dither picker).
-- `adaptive_palette_map` — the palette-map card minus the palette editor, plus a "colors" count slider; reuses the same dither and preserve-alpha widgets.
+- `palette_map` — non-scalar params (a palette editor, a dither picker). Also shows a `mapping_space` dropdown, placed by hand since the card is bespoke.
+- `adaptive_palette_map` — the palette-map card minus the palette editor, plus a "colors" count slider; reuses the same dither, preserve-alpha, and mapping-space widgets.
 - `resize` — a two-mode layout (a checkbox toggles between a longest-side slider and exact width/height sliders, greying the inactive half) that the generic per-param loop can't express.
 
 Even the bespoke cards reuse the generic scalar widgets (`BoolWidget`, `IntSlider`) rather than reimplementing them — the bespokeness is in the *layout*, not the controls.
@@ -154,6 +156,6 @@ That substitution is only good because the schema table (`OP_VARIANTS`) exists t
 
 The three-file splits make each of those parts findable on disk: `op_schema/tables.rs` is the contract, `op_instance.rs` is the storage type, `op_instance/boundary.rs` is the enforcement. If you come back to this in six months and want to know "where does the runtime check happen," the filename answers. If you want to know "what params does an op have," different filename. If you want to know "what shape can a value take," a third.
 
-The payoff, again: the scalar ops share one config component, and adding another is one table row. Adding a new dither algorithm is one table row. The bespoke ops (`palette_map`, `adaptive_palette_map`, `resize`) are hand-written, but that bespokeness is *localized* to their own cards — it doesn't push its shape onto anything else, and even they reuse the shared scalar widgets.
+The payoff, again: the scalar ops share one config component, and adding another is one table row. Adding a new dither algorithm is one table row. Adding a one-of-N choice param (like `mapping_space`) is one table row plus the shared `EnumWidget`. The bespoke ops (`palette_map`, `adaptive_palette_map`, `resize`) are hand-written, but that bespokeness is *localized* to their own cards — it doesn't push its shape onto anything else, and even they reuse the shared scalar widgets.
 
 That's the architecture, top to bottom.

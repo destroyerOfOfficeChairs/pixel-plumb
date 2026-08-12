@@ -15,8 +15,10 @@ pub struct Oklab {
 
 /// Which color space palette *mapping* measures "nearest" in. This affects only
 /// which palette entry each pixel maps to — not palette selection, not dithering
-/// math (error diffusion stays in linear light either way).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+/// math (error diffusion stays in linear light either way). Serialized as part
+/// of the palette-map ops, so it appears in pipeline YAML and the value-bag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MappingSpace {
     /// Perceptual nearest (OkLab distance). The default, and Pixel Plumb's
     /// whole thesis: equal numeric distance = equal perceived difference.

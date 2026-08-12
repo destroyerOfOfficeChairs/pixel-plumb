@@ -87,6 +87,22 @@ fn param_widget(
         }
         .into_any(),
 
+        ParamKind::Enum {
+            options,
+            default_tag,
+        } => view! {
+            <EnumWidget
+                id=id
+                rows=rows
+                on_edit=on_edit
+                options=options
+                default_tag=default_tag
+                key=key
+                label=p.label
+            />
+        }
+        .into_any(),
+
         // Palette / Dither are not generic scalar params; palette_map has its
         // own config. If one appears here it's a routing bug, so surface it.
         ParamKind::Palette { .. } | ParamKind::Dither { .. } => view! {
@@ -96,6 +112,58 @@ fn param_widget(
         }
         .into_any(),
     }
+}
+
+/// A one-of-N dropdown backed by a `ParamValue::Enum(tag)`. Reads the current
+/// tag from the bag (falling back to `default_tag`), and writes the newly
+/// selected tag on change. Fully generic — any `ParamKind::Enum` param renders
+/// through this, no per-op code.
+#[component]
+pub fn EnumWidget(
+    id: usize,
+    rows: ReadSignal<Vec<OpRow>>,
+    on_edit: Callback<EditPayload>,
+    options: &'static [(&'static str, &'static str)],
+    default_tag: &'static str,
+    key: &'static str,
+    label: &'static str,
+) -> impl IntoView {
+    let current = Signal::derive(move || {
+        rows.with(|rs| {
+            rs.iter()
+                .find(|r| r.id == id)
+                .and_then(|r| r.inst.values.get(key))
+                .and_then(|v| v.as_enum().map(str::to_string))
+        })
+        .unwrap_or_else(|| default_tag.to_string())
+    });
+    let on_change = Callback::new(move |tag: String| {
+        on_edit.run((id, key.to_string(), ParamValue::Enum(tag)));
+    });
+
+    view! {
+        <label class="flex items-center justify-between gap-2 text-xs text-slate-400 p-3">
+            {label}
+            <select
+                class="bg-slate-800 text-slate-200 rounded px-2 py-1"
+                prop:value=move || current.get()
+                on:change=move |ev| on_change.run(event_target_value(&ev))
+            >
+                {options
+                    .iter()
+                    .map(|(tag, opt_label)| {
+                        let tag = *tag;
+                        view! {
+                            <option value=tag selected=move || current.get() == tag>
+                                {*opt_label}
+                            </option>
+                        }
+                    })
+                    .collect_view()}
+            </select>
+        </label>
+    }
+    .into_any()
 }
 
 // pub fn bool_widget(

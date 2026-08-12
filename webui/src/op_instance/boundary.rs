@@ -9,7 +9,7 @@
 //! `'static` schema data). Only the conversion out to core's typed form can.
 
 use super::{DitherChoice, OpInstance, ParamValue};
-use pixelizer_core::{DitherConfig, Operation};
+use pixelizer_core::{DitherConfig, MappingSpace, Operation};
 
 #[derive(Debug)]
 pub struct BuildError {
@@ -49,6 +49,20 @@ impl OpInstance {
             .get(key)
             .and_then(ParamValue::as_bool)
             .ok_or_else(|| self.miss(key, "expected a bool"))
+    }
+
+    /// Read the mapping-space enum. Absent = default (OkLab), matching core's
+    /// `#[serde(default)]`. An unrecognized tag is a real error (schema drift).
+    fn mapping_space_field(&self) -> Result<MappingSpace, BuildError> {
+        match self.values.get("mapping_space") {
+            None => Ok(MappingSpace::default()),
+            Some(ParamValue::Enum(tag)) => match tag.as_str() {
+                "oklab" => Ok(MappingSpace::Oklab),
+                "rgb" => Ok(MappingSpace::Rgb),
+                other => Err(self.miss("mapping_space", &format!("unknown space '{other}'"))),
+            },
+            _ => Err(self.miss("mapping_space", "expected an enum tag")),
+        }
     }
 
     fn miss(&self, key: &str, what: &str) -> BuildError {
@@ -111,6 +125,7 @@ impl OpInstance {
                     colors,
                     dither,
                     preserve_alpha,
+                    mapping_space: self.mapping_space_field()?,
                 }
             }
             "adaptive_palette_map" => {
@@ -131,6 +146,7 @@ impl OpInstance {
                     colors,
                     dither,
                     preserve_alpha,
+                    mapping_space: self.mapping_space_field()?,
                 }
             }
             other => {

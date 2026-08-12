@@ -4,7 +4,9 @@ Rationale for the architectural and algorithmic choices in `pixelizer-core`. For
 
 ## Why perceptual color matching?
 
-`palette_map` uses OkLab distance rather than RGB distance to decide which palette color is "nearest" to each pixel. OkLab is a perceptually uniform color space — equal numeric distances correspond to equal perceived color differences. In RGB, the difference between two greens can numerically equal the difference between a green and a brown, even though the second pair looks more different to a human. OkLab fixes this.
+By default, `palette_map` uses OkLab distance rather than RGB distance to decide which palette color is "nearest" to each pixel. OkLab is a perceptually uniform color space — equal numeric distances correspond to equal perceived color differences. In RGB, the difference between two greens can numerically equal the difference between a green and a brown, even though the second pair looks more different to a human. OkLab fixes this.
+
+The mapping space is a per-op choice (`mapping_space`, default OkLab): naive RGB nearest-distance is also available. OkLab is the better default and wins on most images, but at low color counts the two can trade places, so the choice is surfaced rather than hardcoded. Only the *nearest-entry* decision changes between the two — dithering's error diffusion stays in linear light either way (it's about light quantities, not perceptual matching), so the two modes differ only in which palette color each pixel is assigned to. The default adaptive palette is selected in OkLab too (see below), so the perceptual choice is consistent across selection and mapping.
 
 ## Adjusting color in OkLab (saturation, contrast)
 
@@ -34,17 +36,22 @@ The same gamma concern applies to any operation that averages pixels, not just d
 
 Each representation serves a different purpose. We compute them once during palette setup and pass references to them through the inner loops.
 
-## Adaptive palette generation (median-cut)
+## Adaptive palette generation (octree quantization)
 
-`adaptive_palette_map` generates a palette *from the image* instead of taking a fixed one, then reduces the image to it. Crucially, it doesn't reimplement mapping or dithering — it generates a list of hex colors and hands them to the existing `palette_map`, whose input is already `&[String]`. The only new code is the palette generation; the mapping path is reused unchanged.
+`adaptive_palette_map` generates a palette *from the image* instead of taking a fixed one, then reduces the image to it. Crucially, it doesn't reimplement mapping or dithering — it generates a list of hex colors and hands them to the existing `palette_map`, whose input is already `&[String]`. The only new code is the palette generation; the mapping path is reused unchanged. This "generate a palette, then delegate" seam is what let the generator be swapped wholesale (see below) without touching mapping.
 
-Generation is **median-cut**: subsample the pixels (a few thousand capture the color distribution and keep it fast inside the synchronous run), place them in one box, then repeatedly split the box with the widest color range — along its widest channel, at that channel's median — until we reach the requested count or no box can be split further. Each box's average color becomes a palette entry.
+Generation is **octree quantization** (`octree.rs`), the algorithm ImageMagick uses, built from its specification (https://imagemagick.org/quantize/). It runs in three phases:
 
-Two deliberate choices:
-- **Split by widest range, not by pixel count.** The classic variant splits the most-populous box; splitting the widest-range box instead allocates palette entries where color *variation* is, which gives better perceptual coverage.
-- **Average each box in linear light**, for the same gamma reason as blur and dithering above — the mean of gamma-encoded values isn't the encoding of the mean intensity.
+- **Classify** — each pixel walks an octree that subdivides the color cube into eight equal octants per level. The cubes are a *fixed* geometric grid; what adapts to the image is which cubes get instantiated (lazily, only where pixels fall) and how deep the tree goes in dense color regions. Because the cuts are always at midpoints, the octant a color belongs to at each level is just a 3-bit value read from that level's bit of each channel — no comparisons. Each node accumulates a pixel count, colour sums, and a squared-error term.
+- **Reduce** — the tree is collapsed, deepest level first, until at most the requested number of nodes own a color. At each step the lowest-error nodes are pruned, folding their color statistics up into their parents. Pruning removes the *cheapest* distinctions first, so the budget is spent where it matters — and, unlike a fixed heuristic, this adapts correctly at both 4 colors and 64.
+- **Assign** — each surviving owner emits its mean color (sums ÷ count).
 
-The requested count is a *maximum*: an image with fewer distinct colors than requested yields fewer entries, since a single-color box can't be split. k-means and the pixel-count median-cut variant are possible future generators behind the same "generate a palette, then delegate to `palette_map`" seam (see ROADMAP.md).
+Two things worth recording:
+
+- **Depth is a function of the requested color count, not fixed.** A full-depth tree distinguishes all 16M colors and is catastrophically slow to build and reduce on a photo. Capping depth (roughly `log2(colors)` plus a small margin, clamped to a ceiling) keeps the tree small while still giving reduction plenty of distinctions to choose from. Combined with a level-order (deepest-first) single-pass reduction and a maintained owner count, this makes the whole thing linear-ish in practice rather than the quadratic a naive rescan would cost.
+- **It can subdivide OkLab space instead of RGB.** `octree_palette_oklab` runs the *same* octree on pixels first mapped into a normalized-OkLab cube, so colors group by perceptual proximity and the pruning error is a perceptual distance. The octree itself is untouched — only the coordinates going in and the palette coming out are transformed. This is Pixel Plumb's default for adaptive palettes: perceptual selection to match the perceptual mapping. The RGB variant (`octree_palette`) is kept as a comparison baseline.
+
+The requested count is a *maximum*: an image with fewer distinct colors than requested yields fewer entries. (An earlier version used median-cut; the octree replaced it because median-cut heuristics couldn't allocate palette entries well across both low and high color counts on the same image — see ROADMAP.md for the history and possible future generators like Wu's algorithm or k-means, which would slot into the same delegation seam.)
 
 ## Output encoding: indexed PNG when it pays
 

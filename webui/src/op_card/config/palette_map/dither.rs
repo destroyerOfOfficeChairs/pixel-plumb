@@ -125,7 +125,7 @@ fn dither_param_widget(
         }
 
         // A dither variant's params are always scalars; these shouldn't occur.
-        ParamKind::Palette { .. } | ParamKind::Dither { .. } => view! {
+        ParamKind::Palette { .. } | ParamKind::Dither { .. } | ParamKind::Enum { .. } => view! {
             <p class="text-xs text-red-400 px-3">"non-scalar dither param"</p>
         }
         .into_any(),
@@ -144,7 +144,7 @@ pub fn DitherConfig(
     rows: ReadSignal<Vec<OpRow>>,
     on_edit: Callback<EditPayload>,
 ) -> impl IntoView {
-    let enabled = Memo::new(move |_| current_tag(rows, id).is_some());
+    let enabled = Signal::derive(move || current_tag(rows, id).is_some());
 
     // Toggle on -> default choice (first variant). Toggle off -> None.
     let on_toggle = move |ev: leptos::ev::Event| {
@@ -165,7 +165,9 @@ pub fn DitherConfig(
     };
 
     // The selected variant descriptor drives the param sliders.
-    let selected_tag = Memo::new(move |_| current_tag(rows, id));
+    let selected = Signal::derive(move || {
+        current_tag(rows, id).and_then(|tag| dither_variants().iter().find(|v| v.tag == tag))
+    });
 
     view! {
         <div class="border-t border-slate-800 mt-2 pt-2">
@@ -199,10 +201,11 @@ pub fn DitherConfig(
                     </select>
                 </div>
 
-                {move || selected_tag.get().and_then(|tag| {
-                    dither_variants().iter().find(|v| v.tag == tag).map(|v| {
-                        v.params.iter().map(|p| dither_param_widget(id, rows, on_edit, p)).collect_view()
-                    })
+                {move || selected.get().map(|v| {
+                    v.params
+                        .iter()
+                        .map(|p| dither_param_widget(id, rows, on_edit, p))
+                        .collect_view()
                 })}
             })}
         </div>

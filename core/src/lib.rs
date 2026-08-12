@@ -95,6 +95,8 @@ pub enum Operation {
         dither: Option<DitherConfig>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         preserve_alpha: Option<bool>,
+        #[serde(default)]
+        mapping_space: MappingSpace,
     },
     AdaptivePaletteMap {
         #[serde(default = "default_adaptive_colors")]
@@ -103,6 +105,8 @@ pub enum Operation {
         dither: Option<DitherConfig>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         preserve_alpha: Option<bool>,
+        #[serde(default)]
+        mapping_space: MappingSpace,
     },
     Upscale {
         factor: u32,
@@ -164,20 +168,23 @@ fn default_high_percentile() -> f32 {
 } // clip brightest 1%
 
 /// Apply one operation. The single dispatch point, shared by `apply` and
-/// `apply_stages` so the match can't drift between them.
-fn apply_one(op: &Operation, image: Image, space: MappingSpace) -> Result<Image, PixelizerError> {
+/// `apply_stages` so the match can't drift between them. The palette-map ops
+/// carry their own `mapping_space`; every other op ignores color-space choice.
+fn apply_one(op: &Operation, image: Image) -> Result<Image, PixelizerError> {
     Ok(match op {
         Operation::Downsample { pixel_size } => downsample(*pixel_size, image),
         Operation::PaletteMap {
             colors,
             dither,
             preserve_alpha,
-        } => palette_map(image, colors, *dither, *preserve_alpha, space)?,
+            mapping_space,
+        } => palette_map(image, colors, *dither, *preserve_alpha, *mapping_space)?,
         Operation::AdaptivePaletteMap {
             colors,
             dither,
             preserve_alpha,
-        } => adaptive_palette(image, *colors, *dither, *preserve_alpha, space)?,
+            mapping_space,
+        } => adaptive_palette(image, *colors, *dither, *preserve_alpha, *mapping_space)?,
         Operation::Upscale { factor } => upscale(image, *factor),
         Operation::Posterize { levels } => posterize(image, *levels)?,
         Operation::Blur { sigma } => blur(image, *sigma),
@@ -193,31 +200,21 @@ fn apply_one(op: &Operation, image: Image, space: MappingSpace) -> Result<Image,
     })
 }
 
-/// Run the pipeline with perceptual (OkLab) mapping — the default.
-pub fn apply(pipeline: &Pipeline, image: Image) -> Result<Image, PixelizerError> {
-    apply_with_space(pipeline, image, MappingSpace::Oklab)
-}
-
-/// Run the pipeline, choosing the palette-mapping color space. Only the
-/// palette-mapping ops are affected; everything else ignores `space`.
-pub fn apply_with_space(
-    pipeline: &Pipeline,
-    mut image: Image,
-    space: MappingSpace,
-) -> Result<Image, PixelizerError> {
+/// Run the whole pipeline. Palette-mapping color space is per-op (carried in the
+/// `Operation`), so there's no pipeline-wide space argument anymore.
+pub fn apply(pipeline: &Pipeline, mut image: Image) -> Result<Image, PixelizerError> {
     for op in &pipeline.operations {
-        image = apply_one(op, image, space)?;
+        image = apply_one(op, image)?;
     }
     Ok(image)
 }
 
 /// Run the pipeline, returning the image after *each* operation, in order.
-/// `stages[i]` is the result of ops `0..=i`. One clone per stage. Uses the
-/// default (OkLab) mapping — the webui's stage preview never needs RGB.
+/// `stages[i]` is the result of ops `0..=i`. One clone per stage.
 pub fn apply_stages(pipeline: &Pipeline, mut image: Image) -> Result<Vec<Image>, PixelizerError> {
     let mut stages = Vec::with_capacity(pipeline.operations.len());
     for op in &pipeline.operations {
-        image = apply_one(op, image, MappingSpace::Oklab)?;
+        image = apply_one(op, image)?;
         stages.push(image.clone());
     }
     Ok(stages)

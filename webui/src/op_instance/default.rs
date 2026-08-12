@@ -17,6 +17,7 @@ fn default_value(kind: ParamKind) -> ParamValue {
         // variant used when the user later switches it on (handled in the UI),
         // not a reason to start in the Some(_) state.
         ParamKind::Dither { .. } => ParamValue::Dither(None),
+        ParamKind::Enum { default_tag, .. } => ParamValue::Enum(default_tag.to_string()),
     }
 }
 

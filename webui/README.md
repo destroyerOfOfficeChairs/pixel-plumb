@@ -53,8 +53,8 @@ Load an image, assemble an ordered list of operations, run the pipeline, and vie
 
 - **downsample** — shrink by nearest-neighbor sampling (cropping to an even multiple first), the basis of the pixelated look.
 - **resize** — nearest-neighbor resize, either to a longest-side target (aspect preserved) or exact width×height.
-- **palette map** — map every pixel to the nearest color in a chosen palette, in perceptual OkLab space, with optional error-diffusion or ordered dithering.
-- **adaptive palette map** — generate a palette *from the image* (median-cut) and map to it; same dithering options, no palette to pick.
+- **palette map** — map every pixel to the nearest color in a chosen palette, with optional error-diffusion or ordered dithering. The nearest-match metric is selectable per op (OkLab perceptual by default, or naive RGB).
+- **adaptive palette map** — generate a palette *from the image* (octree quantization, in the same space as mapping) and map to it; same dithering and mapping-space options, no palette to pick.
 - **posterize** — reduce the number of levels per channel.
 - **blur** — Gaussian blur (in linear light).
 - **normalize** — stretch the brightness range by percentile.
@@ -73,7 +73,7 @@ Operation order matters — palette mapping should come after averaging steps li
 
 ## How it's built
 
-The one design decision to load into your head first: **the live pipeline is stored as data — a "value bag" — not as core's typed `Operation` enum.** A widget reads and writes bag entries directly; the typed enum is reconstructed once, at Run, at a single boundary. This is what lets the scalar ops share one generic config component (adding one is a single schema-table row). The full walk-through — schema, bag, boundary, run path — is in the repo's [ARCHITECTURE.md](../ARCHITECTURE.md). The color-science and algorithmic rationale (OkLab, linear-light dithering, median-cut, indexed encoding) is in [core's DESIGN.md](../core/DESIGN.md).
+The one design decision to load into your head first: **the live pipeline is stored as data — a "value bag" — not as core's typed `Operation` enum.** A widget reads and writes bag entries directly; the typed enum is reconstructed once, at Run, at a single boundary. This is what lets the scalar ops share one generic config component (adding one is a single schema-table row). The full walk-through — schema, bag, boundary, run path — is in the repo's [ARCHITECTURE.md](../ARCHITECTURE.md). The color-science and algorithmic rationale (OkLab, linear-light dithering, octree palette generation, indexed encoding) is in [core's DESIGN.md](../core/DESIGN.md).
 
 A deliberate consequence worth stating here: the heavy functions (`decode`, `encode_png`, `apply`) are plain, free of Leptos and DOM types, so the pipeline can move into a web worker later without dragging UI code along.
 

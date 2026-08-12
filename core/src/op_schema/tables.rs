@@ -162,6 +162,11 @@ const CONTRAST_PARAMS: &[ParamDescriptor] = &[ParamDescriptor {
     },
 }];
 
+/// Options for the mapping-space dropdown, shared by both palette-map ops.
+/// Tags must match `MappingSpace`'s serde (snake_case): "oklab", "rgb".
+const MAPPING_SPACE_OPTIONS: &[(&str, &str)] =
+    &[("oklab", "OkLab (perceptual)"), ("rgb", "RGB (naive)")];
+
 const PALETTE_MAP_PARAMS: &[ParamDescriptor] = &[
     ParamDescriptor {
         key: "palette",
@@ -180,6 +185,14 @@ const PALETTE_MAP_PARAMS: &[ParamDescriptor] = &[
         label: "dither",
         kind: ParamKind::Dither {
             default_tag: "bayer8",
+        },
+    },
+    ParamDescriptor {
+        key: "mapping_space",
+        label: "mapping space",
+        kind: ParamKind::Enum {
+            options: MAPPING_SPACE_OPTIONS,
+            default_tag: "oklab",
         },
     },
 ];
@@ -204,6 +217,14 @@ const ADAPTIVE_PALETTE_MAP_PARAMS: &[ParamDescriptor] = &[
         label: "dither",
         kind: ParamKind::Dither {
             default_tag: "bayer8",
+        },
+    },
+    ParamDescriptor {
+        key: "mapping_space",
+        label: "mapping space",
+        kind: ParamKind::Enum {
+            options: MAPPING_SPACE_OPTIONS,
+            default_tag: "oklab",
         },
     },
 ];

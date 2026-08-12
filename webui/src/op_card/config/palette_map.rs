@@ -5,6 +5,7 @@ mod dropzone;
 mod swatches;
 
 use super::generic_config::BoolWidget;
+use super::generic_config::EnumWidget;
 use crate::op_instance::ParamValue;
 use crate::{EditPayload, OpRow, Palettes};
 use dither::DitherConfig;
@@ -47,6 +48,17 @@ pub fn palette_map_config(
             // TODO: Remove hardcoded "default=true", "key=alpha", and "label=preserve alpha" in favor of reading from the op_schema
             <BoolWidget id=id rows=rows on_edit=on_edit default=true key="alpha" label="preserve alpha"/>
             <DitherConfig id=id rows=rows on_edit=on_edit/>
+            // Mapping space dropdown. Hardcoded like the widgets above (same TODO
+            // applies); tags/labels mirror MAPPING_SPACE_OPTIONS in core's schema.
+            <EnumWidget
+                id=id
+                rows=rows
+                on_edit=on_edit
+                options=&[("oklab", "OkLab (perceptual)"), ("rgb", "RGB (naive)")]
+                default_tag="oklab"
+                key="mapping_space"
+                label="mapping space"
+            />
         </div>
     }
     .into_any()

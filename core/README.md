@@ -75,7 +75,7 @@ operations:
 **`contrast`** — Pushes lightness away from mid-grey in OkLab, leaving chroma unchanged.
 - `factor: f32` (default 1.0) — >1.0 more contrast, <1.0 flatter.
 
-**`palette_map`** — Maps each pixel to its perceptually-nearest color in a user-specified palette, using OkLab distance.
+**`palette_map`** — Maps each pixel to its nearest color in a user-specified palette. The distance metric is chosen by `mapping_space` (default `oklab`, perceptual; `rgb` for naive Euclidean).
 - `colors: Vec<String>` — Hex color strings, e.g. `"#ff0000"`
 - `preserve_alpha: bool` (optional) — keep the source alpha channel rather than making output opaque.
 - `dither` (optional) — One of:
@@ -84,21 +84,24 @@ operations:
     - `clamp: bool` — Constrain the error-diffusion buffer to the palette's range. Helps when the palette can't represent brights or darks (default true).
   - `algorithm: bayer4 | bayer8` plus:
     - `strength: f32` — Magnitude of the per-pixel dither bias (default 32.0).
+- `mapping_space` (optional) — `oklab` (default, perceptual) or `rgb` (naive Euclidean).
 
-**`adaptive_palette_map`** — Generates a palette *from the image* (median-cut) and maps to it. Same `dither` and `preserve_alpha` options as `palette_map`; instead of a color list, takes a count.
+**`adaptive_palette_map`** — Generates a palette *from the image* (octree quantization) and maps to it. Same `dither`, `preserve_alpha`, and `mapping_space` options as `palette_map`; instead of a color list, takes a count. The palette is selected in the same space as mapping (OkLab by default).
 - `colors: u32` (default 16, range 2–256) — the maximum palette size to generate.
+- `mapping_space` (optional) — as above; also selects which space the palette is generated in.
 
 ## Module layout
 
 - `lib.rs` — Pipeline definition, `Operation` enum, `DitherConfig`, `apply` / `apply_stages` orchestrators.
-- `color_utils.rs` — OkLab conversion (both directions), palette preparation, hex parsing, chroma/contrast helpers.
+- `color_utils.rs` — OkLab conversion (both directions), palette preparation, hex parsing, chroma/contrast helpers, `MappingSpace`, and the RGB/OkLab nearest-entry functions.
 - `palette_map.rs` — Three palette-mapping algorithms (flat, error-diffusion, ordered).
-- `adaptive_palette.rs` — Median-cut palette generation; delegates mapping to `palette_map`.
+- `octree.rs` — Octree color quantization (classify/reduce/assign), in RGB or OkLab space.
+- `adaptive_palette.rs` — Adaptive palette generation; runs the octree, then delegates mapping to `palette_map`.
 - `downsample.rs`, `upscale.rs`, `pixelizer_resize.rs`, `posterize.rs`, `blur.rs`, `normalize.rs`, `saturation.rs`, `contrast.rs` — One per pipeline operation.
 - `encode.rs` — PNG output, choosing indexed color when the image is small and opaque.
 - `op_schema.rs` (+ `op_schema/tables.rs`, `op_schema/labels.rs`) — Descriptor tables (parameter names, types, defaults, ranges) that let a frontend render operation and dither config UI without hardcoding it. See [DESIGN.md](DESIGN.md).
 
-For the rationale behind these design choices — perceptual color matching, linear-light error diffusion, median-cut palette generation, indexed encoding, operation ordering, and more — see [DESIGN.md](DESIGN.md). For notes on a possible GPU backend, see [GPU_NOTES.md](GPU_NOTES.md).
+For the rationale behind these design choices — perceptual color matching, linear-light error diffusion, octree palette generation (in RGB or OkLab space), indexed encoding, operation ordering, and more — see [DESIGN.md](DESIGN.md). For notes on a possible GPU backend, see [GPU_NOTES.md](GPU_NOTES.md).
 
 ## References
 
