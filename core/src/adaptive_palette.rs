@@ -45,7 +45,8 @@ pub fn adaptive_palette(
     preserve_alpha: Option<bool>,
     space: crate::color_utils::MappingSpace,
 ) -> Result<Image, PixelizerError> {
-    let rgb = crate::octree::octree_palette(&image, colors.max(1) as usize);
+    // let rgb = crate::octree::octree_palette(&image, colors.max(1) as usize);
+    let rgb = crate::octree::octree_palette_oklab(&image, colors.max(1) as usize);
     let hex: Vec<String> = rgb
         .iter()
         .map(|[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}"))
