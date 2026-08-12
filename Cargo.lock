@@ -1309,7 +1309,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pixelizer-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "pixelizer-core",
  "serde_yaml",
@@ -1317,7 +1317,7 @@ dependencies = [
 
 [[package]]
 name = "pixelizer-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "image",
  "png 0.17.16",
@@ -2227,7 +2227,7 @@ dependencies = [
 
 [[package]]
 name = "webui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "console_error_panic_hook",
