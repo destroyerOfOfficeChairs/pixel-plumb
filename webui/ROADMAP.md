@@ -12,7 +12,11 @@ Nothing yet.
 
 ---
 
-## Version 0.1.1 goals
+## Version 0.1.2 goals
+
+## Bug in the Normalize OP
+
+In the webui, a user can set `high` to be lower than `low`, and that causes an error where the spinner goes on forever.
 
 In no particular order:
 
