@@ -12,6 +12,7 @@
 *.jpg
 *.jpeg
 !cli/girl_with_a_pearl_earring.jpg
+!webui/favicon.png
 
 # CLI scratch outputs
 /cli/output.png
